@@ -1,0 +1,4 @@
+name: 'Token context test'
+type: module
+package: Testing
+version: VERSION

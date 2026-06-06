@@ -1611,9 +1611,60 @@ services:
   Drupal\Core\Breadcrumb\BreadcrumbPreprocess:
     class: Drupal\Core\Breadcrumb\BreadcrumbPreprocess
     autowire: true
+  token.renderer:
+    class: Drupal\Core\Token\TokenRenderer
+    arguments: ['@date.formatter', '@transliteration']
+  Drupal\Core\Token\TokenRendererInterface: '@token.renderer'
+  token.legacy_bridge:
+    class: Drupal\Core\Token\LegacyTokenBridge
+    arguments: ['@module_handler']
+  Drupal\Core\Token\LegacyTokenBridge: '@token.legacy_bridge'
+  plugin.manager.token_resolver:
+    class: Drupal\Core\Token\TokenResolverManager
+    parent: default_plugin_manager
+  token.attributed_discovery:
+    class: Drupal\Core\Token\Discovery\AttributedTokenDiscovery
+    arguments:
+      - '@plugin.manager.token_resolver'
+      - !tagged_iterator token.generic_resolver
+    tags:
+      - { name: token.discovery }
+  Drupal\Core\Token\Discovery\TokenDiscoveryInterface: '@token.attributed_discovery'
+  token.typed_data_discovery:
+    class: Drupal\Core\Token\Discovery\TypedDataFieldDiscovery
+    arguments: ['@entity_type.manager', '@entity_field.manager']
+    tags:
+      - { name: token.discovery.auto }
+  token.list_delta_resolver:
+    class: Drupal\Core\Token\ListDeltaResolver
+  token.field_value_resolver:
+    class: Drupal\Core\Token\FieldValueToken
+    tags:
+      - { name: token.generic_resolver }
+  token.entity_reference_field_resolver:
+    class: Drupal\Core\Token\EntityReferenceFieldToken
+    tags:
+      - { name: token.generic_resolver }
+  token.entity_deref_resolver:
+    class: Drupal\Core\Token\EntityDerefToken
+    tags:
+      - { name: token.generic_resolver }
+  token.image_style_resolver:
+    class: Drupal\Core\Token\ImageStyleToken
+    arguments: ['@entity_type.manager']
+    tags:
+      - { name: token.generic_resolver }
+  token.registry:
+    class: Drupal\Core\Token\TokenRegistry
+    arguments: ['@module_handler', '@cache.default', '@language_manager', '@event_dispatcher', !tagged_iterator token.discovery.auto, !tagged_iterator token.discovery, '@cache_tags.invalidator']
+  Drupal\Core\Token\TokenRegistryInterface: '@token.registry'
+  token.resolution_engine:
+    class: Drupal\Core\Token\TokenResolutionEngine
+    arguments: ['@token.legacy_bridge', '@token.registry', '@token.attributed_discovery', '@current_user', '@token.renderer', '@token.list_delta_resolver', '@language_manager']
+  Drupal\Core\Token\TokenResolutionEngineInterface: '@token.resolution_engine'
   token:
     class: Drupal\Core\Utility\Token
-    arguments: ['@module_handler', '@cache.default', '@language_manager', '@cache_tags.invalidator', '@renderer']
+    arguments: ['@module_handler', '@cache.default', '@language_manager', '@cache_tags.invalidator', '@renderer', '@token.resolution_engine']
   Drupal\Core\Utility\Token: '@token'
   batch.storage:
     class: Drupal\Core\Batch\BatchStorage

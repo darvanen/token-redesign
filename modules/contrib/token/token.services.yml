@@ -35,3 +35,12 @@ services:
     class: Drupal\token\Hook\TokenTokenInfoHooks
   Drupal\token\Hook\TokenRequirementsHooks:
     class: Drupal\token\Hook\TokenRequirementsHooks
+
+  # Phase 1 of fieldTokenInfoAlter migration: register field-derived token
+  # definitions via TokenDiscoveryAlterEvent instead of hook_token_info_alter().
+  # The hook implementation in TokenTokenInfoHooks is retained until deprecated.
+  token.field_token_discovery_subscriber:
+    class: Drupal\token\EventSubscriber\FieldTokenDiscoverySubscriber
+    arguments: ['@entity_type.manager', '@entity_field.manager', '@token.entity_mapper']
+    tags:
+      - { name: event_subscriber }

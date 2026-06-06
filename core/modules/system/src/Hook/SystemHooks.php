@@ -7,6 +7,7 @@ use Drupal\Core\StreamWrapper\LocalStream;
 use Drupal\Core\Site\Settings;
 use Drupal\Core\Link;
 use Drupal\Core\Entity\ContentEntityTypeInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
 use Drupal\Core\Database\Query\AlterableInterface;
 use Drupal\Core\Block\BlockPluginInterface;
 use Drupal\Component\Render\PlainTextOutput;
@@ -30,6 +31,40 @@ use Drupal\Core\Hook\Attribute\Hook;
 class SystemHooks {
 
   use StringTranslationTrait;
+
+  /**
+   * Implements hook_entity_bundle_field_info_alter().
+   *
+   * Auto-attaches the token placement gate to every text-bearing field, the
+   * surface authors place tokens into and the token system later runs
+   * replacement over. This covers both plain-string and formatted-text field
+   * types, since tokens are replaced in either. The author is gated at save
+   * time, so they cannot place a token they are not entitled to place. Entity
+   * validation runs on form and API submission (the untrusted-author path), so
+   * the gate fires exactly there and leaves trusted programmatic writes alone.
+   *
+   * The set of gated field types is enumerated rather than derived: a custom
+   * text-like field type from contrib is not auto-covered until added here or
+   * gated explicitly.
+   *
+   * @param \Drupal\Core\Field\FieldDefinitionInterface[] $fields
+   *   The field definitions for the bundle, altered by reference.
+   * @param \Drupal\Core\Entity\EntityTypeInterface $entity_type
+   *   The entity type the bundle belongs to.
+   * @param string $bundle
+   *   The bundle the fields belong to.
+   *
+   * @see \Drupal\Core\Token\Plugin\Validation\Constraint\TokenPlacementConstraint
+   */
+  #[Hook('entity_bundle_field_info_alter')]
+  public function entityBundleFieldInfoAlter(array &$fields, EntityTypeInterface $entity_type, string $bundle): void {
+    $text_bearing_types = ['string', 'string_long', 'text', 'text_long', 'text_with_summary'];
+    foreach ($fields as $field) {
+      if (in_array($field->getType(), $text_bearing_types, TRUE)) {
+        $field->addConstraint('TokenPlacement');
+      }
+    }
+  }
 
   /**
    * Implements hook_help().

@@ -64,8 +64,8 @@ class WebformVariantManager extends DefaultPluginManager implements WebformVaria
   /**
    * {@inheritdoc}
    */
-  public function getGroupedDefinitions(?array $definitions = NULL) {
-    $definitions = $this->traitGetGroupedDefinitions($definitions);
+  public function getGroupedDefinitions(?array $definitions = NULL, string $label_key = 'label') {
+    $definitions = $this->traitGetGroupedDefinitions($definitions, $label_key);
     // Do not display the 'broken' plugin in the UI.
     unset($definitions[$this->t('Broken')]['broken']);
     return $definitions;

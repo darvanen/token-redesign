@@ -1,3 +1,7 @@
+place unverifiable tokens:
+  title: 'Place unverifiable tokens'
+  description: 'Allow saving content containing a token chain whose target the placement gate cannot statically verify (for example a polymorphic reference). Grant only to trusted authors.'
+  restrict access: true
 administer modules:
   title: 'Administer modules'
 administer site configuration:

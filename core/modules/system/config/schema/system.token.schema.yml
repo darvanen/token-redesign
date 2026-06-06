@@ -1,0 +1,13 @@
+# Schema for the configuration files of the core token system.
+
+system.token:
+  type: config_object
+  label: 'Token settings'
+  mapping:
+    harden_placement:
+      type: boolean
+      label: 'Harden token placement'
+      # When true, the placement gate blocks token chains it cannot statically
+      # verify unless the author holds 'place unverifiable tokens'. New sites
+      # default to true; existing sites are expected to default to false via an
+      # update hook so an upgrade does not change save behaviour unannounced.

@@ -14,6 +14,9 @@ use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Render\AttachmentsInterface;
 use Drupal\Core\Render\BubbleableMetadata;
 use Drupal\Core\Render\RendererInterface;
+use Drupal\Core\Token\LegacyTokenBridge;
+use Drupal\Core\Token\OutputContext;
+use Drupal\Core\Token\TokenResolutionEngineInterface;
 
 /**
  * Drupal placeholder/token replacement system.
@@ -115,6 +118,13 @@ class Token {
   protected $renderer;
 
   /**
+   * The token resolution engine.
+   *
+   * @var \Drupal\Core\Token\TokenResolutionEngineInterface|null
+   */
+  protected ?TokenResolutionEngineInterface $resolutionEngine;
+
+  /**
    * Constructs a new class instance.
    *
    * @param \Drupal\Core\Extension\ModuleHandlerInterface $module_handler
@@ -127,13 +137,18 @@ class Token {
    *   The cache tags invalidator.
    * @param \Drupal\Core\Render\RendererInterface $renderer
    *   The renderer.
+   * @param \Drupal\Core\Token\TokenResolutionEngineInterface|null $resolution_engine
+   *   The token resolution engine. When NULL (e.g. in tests or subclasses that
+   *   call parent::__construct() with 5 arguments), generate() falls back to
+   *   invoking the legacy hook pipeline directly via LegacyTokenBridge.
    */
-  public function __construct(ModuleHandlerInterface $module_handler, CacheBackendInterface $cache, LanguageManagerInterface $language_manager, CacheTagsInvalidatorInterface $cache_tags_invalidator, RendererInterface $renderer) {
+  public function __construct(ModuleHandlerInterface $module_handler, CacheBackendInterface $cache, LanguageManagerInterface $language_manager, CacheTagsInvalidatorInterface $cache_tags_invalidator, RendererInterface $renderer, ?TokenResolutionEngineInterface $resolution_engine = NULL) {
     $this->cache = $cache;
     $this->languageManager = $language_manager;
     $this->moduleHandler = $module_handler;
     $this->cacheTagsInvalidator = $cache_tags_invalidator;
     $this->renderer = $renderer;
+    $this->resolutionEngine = $resolution_engine;
   }
 
   /**
@@ -160,6 +175,19 @@ class Token {
    *     reference, the data, and the options as parameters.
    *   - clear: A boolean flag indicating that tokens should be removed from the
    *     final text if no replacement value can be generated.
+   *   The following options are honoured by the token resolution engine for
+   *   tokens served by attributed resolvers; legacy hook_tokens() implementations
+   *   ignore them:
+   *   - viewer: (optional) An \Drupal\Core\Session\AccountInterface that token
+   *     access is checked against. Defaults to the current user. Set this when
+   *     the output is consumed by someone other than the current request user,
+   *     for example the recipient of a queued email.
+   *   - token_actor: (optional) A \Drupal\Core\Token\ActorContext supplying the
+   *     viewer. Takes precedence over 'viewer'.
+   *   - output_context: (optional) A \Drupal\Core\Token\OutputContext case
+   *     selecting how resolved values are serialized (HTML, plain text, URL
+   *     slug, email subject). Defaults to HTML for replace() and plain text for
+   *     replacePlain().
    * @param \Drupal\Core\Render\BubbleableMetadata|null $bubbleable_metadata
    *   (optional) An object to which static::generate() and the hooks and
    *   functions that it invokes will add their required bubbleable metadata.
@@ -239,6 +267,13 @@ class Token {
 
     $bubbleable_metadata_is_passed_in = (bool) $bubbleable_metadata;
     $bubbleable_metadata = $bubbleable_metadata ?: new BubbleableMetadata();
+
+    // Tell the resolution engine which output context to render attributed
+    // tokens for, unless the caller has already chosen one explicitly. replace()
+    // produces HTML; replacePlain() produces plain text.
+    if (!isset($options['output_context'])) {
+      $options['output_context'] = $markup ? OutputContext::Html : OutputContext::PlainText;
+    }
 
     $replacements = [];
     foreach ($text_tokens as $type => $tokens) {
@@ -342,6 +377,9 @@ class Token {
    *     array of token replacements after they are generated. Can be used when
    *     modules require special formatting of token text, for example URL
    *     encoding or truncation to a specific length.
+   *   - viewer, token_actor, output_context: Honoured by the token resolution
+   *     engine for tokens served by attributed resolvers. See ::replace() for
+   *     details.
    * @param \Drupal\Core\Render\BubbleableMetadata $bubbleable_metadata
    *   The bubbleable metadata. This is passed to the token replacement
    *   implementations so that they can attach their metadata.
@@ -355,24 +393,13 @@ class Token {
    * @see hook_tokens_alter()
    */
   public function generate($type, array $tokens, array $data, array $options, BubbleableMetadata $bubbleable_metadata) {
-    foreach ($data as $object) {
-      if ($object instanceof CacheableDependencyInterface || $object instanceof AttachmentsInterface) {
-        $bubbleable_metadata->addCacheableDependency($object);
-      }
+    if ($this->resolutionEngine !== NULL) {
+      return $this->resolutionEngine->generate($type, $tokens, $data, $options, $bubbleable_metadata);
     }
 
-    $replacements = $this->moduleHandler->invokeAll('tokens', [$type, $tokens, $data, $options, $bubbleable_metadata]);
-
-    // Allow other modules to alter the replacements.
-    $context = [
-      'type' => $type,
-      'tokens' => $tokens,
-      'data' => $data,
-      'options' => $options,
-    ];
-    $this->moduleHandler->alter('tokens', $replacements, $context, $bubbleable_metadata);
-
-    return $replacements;
+    // Fallback for direct instantiation without a resolution engine (e.g.
+    // subclasses or tests that call new Token() without the 6th argument).
+    return (new LegacyTokenBridge($this->moduleHandler))->generate($type, $tokens, $data, $options, $bubbleable_metadata);
   }
 
   /**
