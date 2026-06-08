@@ -1,0 +1,7 @@
+name: 'Webform Schema'
+type: module
+description: 'Adds a ''Schema'' tab to the webform builder UI.'
+package: Webform
+core_version_requirement: ^10.3 || ^11.0
+dependencies:
+  - 'webform:webform'

@@ -1,0 +1,62 @@
+All Drupal code is Copyright 2001 - present by the original authors.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; either version 2 of the License, or (at
+your option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
+for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program as the file LICENSE.txt; if not, please see
+http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt.
+
+Drupal is a registered trademark of Dries Buytaert.
+
+Drupal includes works under other copyright notices and distributed
+according to the terms of the GNU General Public License or a compatible
+license, including:
+
+JavaScript
+
+  Backbone - Copyright (c) 2010 Jeremy Ashkenas and DocumentCloud
+
+  CKEditor5 - Copyright (c) 2003 CKSource Holding sp. z o.o.
+
+  Floating UI - Copyright (c) 2021 Floating UI contributors
+
+  htmx - Zero-Clause BSD
+
+  jQuery - Copyright (c) OpenJS Foundation and other contributors
+
+  jQuery UI - Copyright (c) OpenJS Foundation and other contributors
+
+  LoadJS - Copyright (c) 2015 Andres Morey
+
+  Sortable - Copyright (c) 2019 All contributors to Sortable
+
+  Tabbable - Copyright (c) 2015 David Clark
+
+  transliteration Copyright (c) 2019 Daniel W. Hieber
+
+  tua-body-scroll-lock Copyright (c) 2018 Evinma, StEve Young
+
+  Underscore.js - Copyright (c) 2009 Jeremy Ashkenas, Julian Gonggrijp, and
+   DocumentCloud and Investigative Reporters & Editors
+
+CSS
+
+  Normalize.css - Copyright (c) Nicolas Gallagher and Jonathan Neal
+
+PHP
+
+  Drupal depends on numerous PHP Composer packages. All Composer packages
+    retain the copyright of the authors.
+
+Brand materials
+
+  Drupal brand materials under core/misc/logo have a dedicated license. See
+  core/misc/logo/LICENSE.txt.

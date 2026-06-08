@@ -1,0 +1,8 @@
+name: 'ECA Migrate Test'
+type: module
+description: 'Test module for migration plugin.'
+core_version_requirement: ^11.3 || ^12.0
+package: Testing
+dependencies:
+  - drupal:migrate
+  - eca:eca_migrate

@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the navigation module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function navigation_install(bool $is_syncing): void {
+  // Do not modify config during sync. Config should be already consolidated.
+  if ($is_syncing) {
+    return;
+  }
+
+  $blocks = \Drupal::moduleHandler()->invokeAll('navigation_defaults');
+  $manager = \Drupal::service('plugin.manager.config_action');
+  foreach ($blocks as $block) {
+    $manager->applyAction('addNavigationBlock', 'navigation.block_layout', $block);
+  }
+}
+
+/**
+ * Implements hook_update_last_removed().
+ */
+function navigation_update_last_removed(): int {
+  return 11002;
+}

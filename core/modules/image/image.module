@@ -1,0 +1,52 @@
+<?php
+
+/**
+ * @file
+ */
+
+use Drupal\image\ImageDerivativeUtilities;
+
+/**
+ * The name of the query parameter for image derivative tokens.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *   \Drupal\image\ImageStyleInterface::TOKEN instead.
+ *
+ * @see https://www.drupal.org/node/3567619
+ */
+define('IMAGE_DERIVATIVE_TOKEN', 'itok');
+
+/**
+ * Clears cached versions of a specific file in all styles.
+ *
+ * @param string $path
+ *   The Drupal file path to the original image.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *   ImageDerivativeUtilities::pathFlush() instead.
+ *
+ * @see https://www.drupal.org/node/3567619
+ */
+function image_path_flush($path): void {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal\image\ImageDerivativeUtilities::pathFlush() instead. See https://www.drupal.org/node/3567619', E_USER_DEPRECATED);
+  \Drupal::service(ImageDerivativeUtilities::class)->pathFlush($path);
+}
+
+/**
+ * Gets an array of image styles suitable for using as select list options.
+ *
+ * @param bool $include_empty
+ *   If TRUE a '- None -' option will be inserted in the options array.
+ *
+ * @return string[]
+ *   Array of image styles both key and value are set to style name.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *   ImageDerivativeUtilities::styleOptions() instead.
+ *
+ * @see https://www.drupal.org/node/3567619
+ */
+function image_style_options($include_empty = TRUE): array {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal\image\ImageDerivativeUtilities::styleOptions() instead. See https://www.drupal.org/node/3567619', E_USER_DEPRECATED);
+  return \Drupal::service(ImageDerivativeUtilities::class)->styleOptions($include_empty);
+}

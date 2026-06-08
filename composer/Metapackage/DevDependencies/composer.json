@@ -1,0 +1,42 @@
+{
+    "name": "drupal/core-dev",
+    "type": "metapackage",
+    "description": "require-dev dependencies from drupal/drupal; use in addition to drupal/core-recommended to run tests from drupal/core.",
+    "license": "GPL-2.0-or-later",
+    "conflict": {
+        "webflo/drupal-core-require-dev": "*"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "12.x-dev"
+        }
+    },
+    "require": {
+        "behat/mink": "^1.11",
+        "behat/mink-browserkit-driver": "^2.2",
+        "colinodell/psr-testlogger": "^1.2",
+        "composer/composer": "^2.8.1",
+        "drupal/coder": "^8.3.30",
+        "lullabot/mink-selenium2-driver": "^1.7.3",
+        "lullabot/php-webdriver": "^2.0.7",
+        "mglaman/phpstan-drupal": "^2.0.15",
+        "micheh/phpcs-gitlab": "^1.1 || ^2.0",
+        "mikey179/vfsstream": "^1.6.11",
+        "open-telemetry/exporter-otlp": "^1",
+        "open-telemetry/sdk": "^1",
+        "php-http/guzzle7-adapter": "^1.0",
+        "phpspec/prophecy": "^1.23",
+        "phpspec/prophecy-phpunit": "^2.4",
+        "phpstan/extension-installer": "^1.4.3",
+        "phpstan/phpstan": "^2.2.0",
+        "phpstan/phpstan-phpunit": "^2.0.16",
+        "phpunit/phpunit": "^12.5.14",
+        "spaze/phpstan-disallowed-calls": "^4.12.0",
+        "symfony/browser-kit": "^8.0",
+        "symfony/css-selector": "^8.0",
+        "symfony/dom-crawler": "^8.0.12",
+        "symfony/error-handler": "^8.0",
+        "symfony/lock": "^8.0",
+        "symfony/var-dumper": "^8.0"
+    }
+}

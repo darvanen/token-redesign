@@ -1,0 +1,29 @@
+parameters:
+  big_pipe.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  html_response.big_pipe_subscriber:
+    class: Drupal\big_pipe\EventSubscriber\HtmlResponseBigPipeSubscriber
+  placeholder_strategy.big_pipe:
+    class: Drupal\big_pipe\Render\Placeholder\BigPipeStrategy
+    tags:
+      - { name: placeholder_strategy, priority: 0 }
+  big_pipe:
+    class: Drupal\big_pipe\Render\BigPipe
+    arguments: ['@renderer', '@session', '@request_stack', '@http_kernel', '@event_dispatcher', '@config.factory', '@messenger', '@router.request_context', '@logger.channel.php', '%http.response.debug_cacheability_headers%']
+  Drupal\big_pipe\Render\BigPipe: '@big_pipe'
+  html_response.attachments_processor.big_pipe:
+    public: false
+    class: \Drupal\big_pipe\Render\BigPipeResponseAttachmentsProcessor
+    decorates: html_response.attachments_processor
+
+  route_subscriber.no_big_pipe:
+    class: Drupal\big_pipe\EventSubscriber\NoBigPipeRouteAlterSubscriber
+  http_middleware.big_pipe:
+    class: \Drupal\big_pipe\StackMiddleware\ContentLength
+    tags:
+      # Must run after the content_length middleware.
+      - { name: http_middleware, priority: 150 }

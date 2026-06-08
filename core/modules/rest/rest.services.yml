@@ -1,0 +1,26 @@
+parameters:
+  rest.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  plugin.manager.rest:
+    class: Drupal\rest\Plugin\Type\ResourcePluginManager
+  cache.rest:
+    class: Drupal\Core\Cache\CacheBackendInterface
+    tags:
+      - { name: cache.bin }
+    factory: ['@cache_factory', 'get']
+    arguments: [rest]
+  rest.resource_routes:
+    class: Drupal\rest\Routing\ResourceRoutes
+  logger.channel.rest:
+    parent: logger.channel_base
+    arguments: ['rest']
+
+  # Event subscribers.
+  rest.resource_response.subscriber:
+    class: Drupal\rest\EventSubscriber\ResourceResponseSubscriber
+  rest.resource.entity.post_route.subscriber:
+    class: \Drupal\rest\EventSubscriber\EntityResourcePostRouteSubscriber

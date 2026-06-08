@@ -1,0 +1,6 @@
+name: 'Webform Third Party Settings test'
+type: module
+description: 'Support module for webform third party settings testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

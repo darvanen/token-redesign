@@ -1,0 +1,28 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\entity_test\Plugin\Validation\Constraint;
+
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\Core\Validation\Attribute\Constraint;
+use Symfony\Component\Validator\Constraint as SymfonyConstraint;
+
+/**
+ * Validates referenced entities.
+ */
+#[Constraint(
+  id: 'TestValidatedReferenceConstraint',
+  label: new TranslatableMarkup('Test validated reference constraint.')
+)]
+class TestValidatedReferenceConstraint extends SymfonyConstraint {
+
+  public function __construct(
+    public $message = 'Invalid referenced entity.',
+    ?array $groups = NULL,
+    mixed $payload = NULL,
+  ) {
+    parent::__construct(groups: $groups, payload: $payload);
+  }
+
+}

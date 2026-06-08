@@ -1,0 +1,7 @@
+name: 'ECA User'
+type: module
+description: 'User events, conditions and actions.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - eca:eca

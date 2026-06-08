@@ -1,0 +1,6 @@
+name: 'Webform Exporter test'
+type: module
+description: 'Support module for webform exporter plugin testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

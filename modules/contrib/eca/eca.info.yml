@@ -1,0 +1,9 @@
+name: 'ECA Core'
+type: module
+description: 'Core module for ECA framework.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - drupal:system
+  - drupal:user
+  - modeler_api:modeler_api

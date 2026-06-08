@@ -1,0 +1,7 @@
+name: 'ECA Cache'
+type: module
+description: 'Cache actions for ECA.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - eca:eca

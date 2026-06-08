@@ -1,0 +1,73 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\Tests\Core\Entity\Query\Sql;
+
+use Drupal\Core\Database\Connection;
+use Drupal\Core\Entity\EntityType;
+use Drupal\Core\Entity\Query\QueryException;
+use Drupal\Core\Entity\Query\Sql\Query;
+use Drupal\Core\Extension\ModuleHandler;
+use Drupal\Tests\UnitTestCase;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
+use Symfony\Component\DependencyInjection\ContainerInterface;
+
+/**
+ * Tests Drupal\Core\Entity\Query\Sql\Query.
+ */
+#[CoversClass(Query::class)]
+#[Group('Entity')]
+class QueryTest extends UnitTestCase {
+
+  /**
+   * The query object.
+   *
+   * @var \Drupal\Core\Entity\Query\Sql\Query
+   */
+  protected $query;
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUp(): void {
+    parent::setUp();
+    $entity_type = new EntityType(['id' => 'example_entity_query']);
+    $conjunction = 'AND';
+    $connection = $this->createStub(Connection::class);
+    $namespaces = ['Drupal\Core\Entity\Query\Sql'];
+
+    $this->query = new Query($entity_type, $conjunction, $connection, $namespaces);
+
+    $container = $this->createMock(ContainerInterface::class);
+    $container
+      ->method('get')
+      ->with('module_handler')
+      ->willReturn($this->createStub(ModuleHandler::class));
+    \Drupal::setContainer($container);
+  }
+
+  /**
+   * Tests entity query for entity type without base table.
+   *
+   * @legacy-covers ::prepare
+   */
+  public function testNoBaseTable(): void {
+    $this->expectException(QueryException::class);
+    $this->expectExceptionMessage('No base table for example_entity_query, invalid query.');
+    $this->query->execute();
+  }
+
+  /**
+   * Tests revision entity query for entity type without revision table.
+   *
+   * @legacy-covers ::prepare
+   */
+  public function testNoRevisionTable(): void {
+    $this->expectException(QueryException::class);
+    $this->expectExceptionMessage('No revision table for example_entity_query, invalid query.');
+    $this->query->allRevisions()->execute();
+  }
+
+}

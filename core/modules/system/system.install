@@ -1,0 +1,76 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for the system module.
+ */
+
+use Drupal\Component\Utility\Crypt;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\Core\Update\EquivalentUpdate;
+
+/**
+ * Implements hook_install().
+ */
+function system_install(): void {
+  // Populate the cron key state variable.
+  $cron_key = Crypt::randomBytesBase64(55);
+  \Drupal::state()->set('system.cron_key', $cron_key);
+
+  // Populate the site UUID and default name (if not set).
+  $site = \Drupal::configFactory()->getEditable('system.site');
+  $site->set('uuid', \Drupal::service('uuid')->generate());
+  if (!$site->get('name')) {
+    $site->set('name', 'Drupal');
+  }
+  $site->save();
+
+  // Populate the dummy query string added to all CSS and JavaScript files.
+  \Drupal::service('asset.query_string')->reset();
+}
+
+/**
+ * Implements hook_update_last_removed().
+ */
+function system_update_last_removed(): int {
+  return 11300;
+}
+
+/**
+ * Install Help Search module if the Search and Help modules are installed.
+ */
+function system_update_11400(): void {
+  // This needs to be a system update so it runs before other updates in order
+  // to get the new help_search plugin in place as early as possible.
+  $module_handler = \Drupal::moduleHandler();
+  if ($module_handler->moduleExists('help')) {
+    \Drupal::database()->schema()->dropTable('help_search_items');
+    if (\Drupal::moduleHandler()->moduleExists('search')) {
+      \Drupal::service('module_installer')->install(['search_help']);
+    }
+  }
+}
+
+/**
+ * Remove the deprecated sequences table.
+ */
+function system_update_12000(): void {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('sequences')) {
+    $schema->dropTable('sequences');
+  }
+}
+
+/**
+ * Equivalent update to 11102.
+ */
+function system_update_12001(): TranslatableMarkup|null {
+  // This is a no-op that exists to prevent an upgrade from 11.4+ to 12.0. That
+  // path is actually a downgrade.
+  $equivalent_update = \Drupal::service('update.update_hook_registry')
+    ->getEquivalentUpdate();
+  if ($equivalent_update instanceof EquivalentUpdate) {
+    return $equivalent_update->toSkipMessage();
+  }
+  return NULL;
+}

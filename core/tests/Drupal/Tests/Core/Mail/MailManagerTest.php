@@ -1,0 +1,234 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\Tests\Core\Mail;
+
+use Drupal\Component\Plugin\Discovery\DiscoveryInterface;
+use Drupal\Core\Cache\CacheBackendInterface;
+use Drupal\Core\DependencyInjection\ContainerBuilder;
+use Drupal\Core\Extension\ModuleHandlerInterface;
+use Drupal\Core\Logger\LoggerChannelFactoryInterface;
+use Drupal\Core\Mail\MailManager;
+use Drupal\Core\Render\RenderContext;
+use Drupal\Core\Render\RendererInterface;
+use Drupal\Tests\UnitTestCase;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\MockObject\Stub;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\RequestStack;
+
+/**
+ * Tests Drupal\Core\Mail\MailManager.
+ */
+#[CoversClass(MailManager::class)]
+#[Group('Mail')]
+class MailManagerTest extends UnitTestCase {
+
+  /**
+   * The cache backend to use.
+   */
+  protected CacheBackendInterface&Stub $cache;
+
+  /**
+   * The module handler.
+   */
+  protected ModuleHandlerInterface&Stub $moduleHandler;
+
+  /**
+   * The configuration factory.
+   *
+   * @var \Drupal\Core\Config\ConfigFactoryInterface|\PHPUnit\Framework\MockObject\MockObject
+   */
+  protected $configFactory;
+
+  /**
+   * The plugin discovery.
+   */
+  protected DiscoveryInterface&Stub $discovery;
+
+  /**
+   * The renderer.
+   */
+  protected RendererInterface&MockObject $renderer;
+
+  /**
+   * The mail manager under test.
+   *
+   * @var \Drupal\Tests\Core\Mail\TestMailManager
+   */
+  protected $mailManager;
+
+  /**
+   * The request stack.
+   *
+   * @var \Symfony\Component\HttpFoundation\RequestStack|\Prophecy\Prophecy\ProphecyInterface
+   */
+  protected $requestStack;
+
+  /**
+   * The current request.
+   *
+   * @var \Symfony\Component\HttpFoundation\Request
+   */
+  protected $request;
+
+  /**
+   * A list of mail plugin definitions.
+   *
+   * @var array
+   */
+  protected $definitions = [
+    'php_mail' => [
+      'id' => 'php_mail',
+      'class' => 'Drupal\Core\Mail\Plugin\Mail\PhpMail',
+    ],
+    'test_mail_collector' => [
+      'id' => 'test_mail_collector',
+      'class' => 'Drupal\Core\Mail\Plugin\Mail\TestMailCollector',
+    ],
+  ];
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function setUp(): void {
+    parent::setUp();
+    // Prepare the default constructor arguments required by MailManager.
+    $this->cache = $this->createStub(CacheBackendInterface::class);
+
+    $this->moduleHandler = $this->createStub(ModuleHandlerInterface::class);
+
+    // Mock a Discovery object to replace AnnotationClassDiscovery.
+    $this->discovery = $this->createStub(DiscoveryInterface::class);
+    $this->discovery
+      ->method('getDefinitions')
+      ->willReturn($this->definitions);
+  }
+
+  /**
+   * Sets up the mail manager for testing.
+   */
+  protected function setUpMailManager($interface = []): void {
+    // Use the provided config for system.mail.interface settings.
+    $this->configFactory = $this->getConfigFactoryStub([
+      'system.mail' => [
+        'interface' => $interface,
+        'mailer_dsn' => [
+          'scheme' => 'null',
+          'host' => 'null',
+          'user' => NULL,
+          'password' => NULL,
+          'port' => NULL,
+          'options' => [],
+        ],
+      ],
+      'system.site' => [
+        'mail' => 'test@example.com',
+      ],
+    ]);
+    $logger_factory = $this->createStub(LoggerChannelFactoryInterface::class);
+    $string_translation = $this->getStringTranslationStub();
+    $this->renderer = $this->createMock(RendererInterface::class);
+    // Construct the manager object and override its discovery.
+    $this->mailManager = new TestMailManager(new \ArrayObject(), $this->cache, $this->moduleHandler, $this->configFactory, $logger_factory, $string_translation, $this->renderer);
+    $this->mailManager->setDiscovery($this->discovery);
+
+    $this->request = new Request();
+
+    $this->requestStack = $this->prophesize(RequestStack::class);
+    $this->requestStack->getCurrentRequest()
+      ->willReturn($this->request);
+
+    // @see \Drupal\Core\Plugin\Factory\ContainerFactory::createInstance()
+    $container = new ContainerBuilder();
+    $container->set('config.factory', $this->configFactory);
+    $container->set('request_stack', $this->requestStack->reveal());
+    \Drupal::setContainer($container);
+  }
+
+  /**
+   * Tests the getInstance method.
+   */
+  public function testGetInstance(): void {
+    $interface = [
+      'default' => 'php_mail',
+      'example_test_key' => 'test_mail_collector',
+    ];
+    $this->setUpMailManager($interface);
+
+    $this->renderer->expects($this->never())
+      ->method('executeInRenderContext');
+
+    // Test that an unmatched message_id returns the default plugin instance.
+    $options = ['module' => 'foo', 'key' => 'bar'];
+    $instance = $this->mailManager->getInstance($options);
+    $this->assertInstanceOf('Drupal\Core\Mail\Plugin\Mail\PhpMail', $instance);
+
+    // Test that a matching message_id returns the specified plugin instance.
+    $options = ['module' => 'example', 'key' => 'test_key'];
+    $instance = $this->mailManager->getInstance($options);
+    $this->assertInstanceOf('Drupal\Core\Mail\Plugin\Mail\TestMailCollector', $instance);
+  }
+
+  /**
+   * Tests that mails are sent in a separate render context.
+   */
+  public function testMailInRenderContext(): void {
+    $interface = [
+      'default' => 'php_mail',
+      'example_test_key' => 'test_mail_collector',
+    ];
+    $this->setUpMailManager($interface);
+
+    $this->renderer->expects($this->exactly(1))
+      ->method('executeInRenderContext')
+      ->willReturnCallback(function (RenderContext $render_context, $callback): void {
+        $message = $callback();
+        $this->assertEquals('example', $message['module']);
+      });
+    $this->mailManager->mail('example', 'key', 'to@example.org', 'en');
+  }
+
+}
+
+/**
+ * Provides a testing version of MailManager with an empty constructor.
+ */
+class TestMailManager extends MailManager {
+
+  /**
+   * Sets the discovery for the manager.
+   *
+   * @param \Drupal\Component\Plugin\Discovery\DiscoveryInterface $discovery
+   *   The discovery object.
+   */
+  public function setDiscovery(DiscoveryInterface $discovery): void {
+    $this->discovery = $discovery;
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function doMail($module, $key, $to, $langcode, $params = [], $reply = NULL, $send = TRUE): array {
+    // Build a simplified message array and return it.
+    $message = [
+      'id' => $module . '_' . $key,
+      'module' => $module,
+      'key' => $key,
+      'to' => $to,
+      'from' => 'from@example.org',
+      'reply-to' => $reply,
+      'langcode' => $langcode,
+      'params' => $params,
+      'send' => TRUE,
+      'subject' => '',
+      'body' => [],
+    ];
+
+    return $message;
+  }
+
+}

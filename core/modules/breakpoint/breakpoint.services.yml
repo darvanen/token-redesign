@@ -1,0 +1,12 @@
+parameters:
+  breakpoint.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  breakpoint.manager:
+    class: Drupal\breakpoint\BreakpointManager
+    tags:
+      - { name: plugin_manager_cache_clear }
+  Drupal\breakpoint\BreakpointManagerInterface: '@breakpoint.manager'

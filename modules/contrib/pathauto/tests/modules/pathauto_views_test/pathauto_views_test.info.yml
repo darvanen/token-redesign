@@ -1,0 +1,6 @@
+name: 'Views Test Config'
+type: module
+description: 'Provides default views for tests.'
+package: Testing
+dependencies:
+  - drupal:views

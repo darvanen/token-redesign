@@ -1,0 +1,15 @@
+parameters:
+  taxonomy.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  taxonomy_term.breadcrumb:
+    class: Drupal\taxonomy\TermBreadcrumbBuilder
+    tags:
+      - { name: breadcrumb_builder, priority: 1002 }
+  taxonomy_term.taxonomy_term_route_context:
+    class: Drupal\taxonomy\ContextProvider\TermRouteContext
+    tags:
+      - { name: 'context_provider' }

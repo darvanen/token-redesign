@@ -1,0 +1,5 @@
+type: module
+name: Token Module Test
+description: Testing module for token functionality.
+package: Testing
+hidden: TRUE

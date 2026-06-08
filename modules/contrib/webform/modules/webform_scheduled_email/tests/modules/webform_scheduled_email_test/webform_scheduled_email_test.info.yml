@@ -1,0 +1,7 @@
+name: 'Webform Scheduled Email test'
+type: module
+description: 'Support module for webform schedule email testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'
+  - 'webform:webform_scheduled_email'

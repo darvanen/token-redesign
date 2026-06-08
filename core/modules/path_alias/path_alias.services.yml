@@ -1,0 +1,29 @@
+parameters:
+  path_alias.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  path_alias.path_processor:
+    class: Drupal\path_alias\PathProcessor\AliasPathProcessor
+    tags:
+      - { name: path_processor_inbound, priority: 100 }
+      - { name: path_processor_outbound, priority: 300 }
+  path_alias.manager:
+    class: Drupal\path_alias\AliasManager
+  Drupal\path_alias\AliasManagerInterface: '@path_alias.manager'
+  path_alias.repository:
+    class: Drupal\path_alias\AliasRepository
+    tags:
+      - { name: backend_overridable }
+  Drupal\path_alias\AliasRepositoryInterface: '@path_alias.repository'
+  path_alias.prefix_list:
+    class: Drupal\path_alias\AliasPrefixList
+    tags:
+      - { name: needs_destruction }
+    arguments: [path_alias_prefix_list, '@cache.bootstrap', '@lock', '@state', '@path_alias.repository']
+  Drupal\path_alias\AliasPrefixListInterface: '@path_alias.prefix_list'
+  Drupal\path_alias\AliasPathMatcher:
+    public: false
+    decorates: path.matcher

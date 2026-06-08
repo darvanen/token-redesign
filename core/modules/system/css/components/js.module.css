@@ -1,0 +1,16 @@
+/**
+ * @file
+ * Utility classes to assist with JavaScript functionality.
+ */
+
+@media (scripting: none) {
+  .js-show {
+    display: none !important;
+  }
+}
+
+@media (scripting: enabled) {
+  .js-hide {
+    display: none !important;
+  }
+}

@@ -1,0 +1,6 @@
+name: 'ECA test: basic array plugins'
+type: module
+description: 'Basic ECA array plugins useful for testing.'
+package: Testing
+dependencies:
+  - eca:eca

@@ -1,0 +1,13 @@
+parameters:
+  dblog.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  logger.dblog:
+    class: Drupal\dblog\Logger\DbLog
+    tags:
+      - { name: logger }
+      - { name: backend_overridable }
+  Drupal\dblog\DbLogFilters: ~

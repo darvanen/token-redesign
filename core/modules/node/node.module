@@ -1,0 +1,209 @@
+<?php
+
+/**
+ * @file
+ */
+
+use Drupal\Core\Session\AccountInterface;
+use Drupal\node\Entity\NodeType;
+use Drupal\node\NodeAccessRebuild;
+use Drupal\node\NodeBulkUpdate;
+use Drupal\node\NodeGrantsHelper;
+use Drupal\node\NodeInterface;
+
+/**
+ * Returns a list of available node type names.
+ *
+ * This list can include types that are queued for addition or deletion.
+ *
+ * @return string[]
+ *   An array of node type labels, keyed by the node type name.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use \Drupal::service('entity_type.bundle.info')->getBundleLabels('node') instead.
+ * @see https://www.drupal.org/node/3534849
+ */
+function node_type_get_names() {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use \Drupal::service(\'entity_type.bundle.info\')->getBundleLabels(\'node\') instead. See https://www.drupal.org/node/3534849', E_USER_DEPRECATED);
+  return \Drupal::service('entity_type.bundle.info')->getBundleLabels('node');
+}
+
+/**
+ * Returns the node type label for the passed node.
+ *
+ * @param \Drupal\node\NodeInterface $node
+ *   A node entity to return the node type's label for.
+ *
+ * @return string|false
+ *   The node type label or FALSE if the node type is not found.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use $node->getBundleEntity()->label() instead.
+ * @see https://www.drupal.org/node/3533301
+ */
+function node_get_type_label(NodeInterface $node) {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use $node->getBundleEntity()->label(). See https://www.drupal.org/node/3533301', E_USER_DEPRECATED);
+  $type = NodeType::load($node->bundle());
+  return $type ? $type->label() : FALSE;
+}
+
+/**
+ * Checks whether the current page is the full page view of the passed-in node.
+ *
+ * @param \Drupal\node\NodeInterface $node
+ *   A node entity.
+ *
+ * @return bool
+ *   TRUE if this is a full page view, otherwise FALSE.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. There is no
+ *    replacement, check the view mode instead during rendering.
+ *
+ * @see https://www.drupal.org/node/3458593
+ */
+function node_is_page(NodeInterface $node) {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. There is no replacement, check the view mode instead during rendering. See https://www.drupal.org/node/3531945', E_USER_DEPRECATED);
+  $route_match = \Drupal::routeMatch();
+  if ($route_match->getRouteName() == 'entity.node.canonical') {
+    $page_node = $route_match->getParameter('node');
+  }
+  return (!empty($page_node) ? $page_node->id() == $node->id() : FALSE);
+}
+
+/**
+ * Updates all nodes in the passed-in array with the passed-in field values.
+ *
+ * IMPORTANT NOTE: This function is intended to work when called from a form
+ * submission handler. Calling it outside of the form submission process may not
+ * work correctly.
+ *
+ * @param array $nodes
+ *   Array of node nids or nodes to update.
+ * @param array $updates
+ *   Array of key/value pairs with node field names and the value to update that
+ *   field to.
+ * @param string $langcode
+ *   (optional) The language updates should be applied to. If none is specified
+ *   all available languages are processed.
+ * @param bool $load
+ *   (optional) TRUE if $nodes contains an array of node IDs to be loaded, FALSE
+ *   if it contains fully loaded nodes. Defaults to FALSE.
+ * @param bool $revisions
+ *   (optional) TRUE if $nodes contains an array of revision IDs instead of
+ *   node IDs. Defaults to FALSE; will be ignored if $load is FALSE.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use \Drupal::service(\Drupal\node\NodeBulkUpdate::class)->process() instead.
+ * @see https://www.drupal.org/node/3533315
+ */
+function node_mass_update(array $nodes, array $updates, $langcode = NULL, $load = FALSE, $revisions = FALSE): void {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.3.0 and is removed from drupal:13.0.0. Use \Drupal::service(\Drupal\node\NodeBulkUpdate::class)->process() instead. See https://www.drupal.org/node/3533315', E_USER_DEPRECATED);
+  \Drupal::service(NodeBulkUpdate::class)->process($nodes, $updates, $langcode, $load, $revisions);
+}
+
+/**
+ * @addtogroup node_access
+ * @{
+ */
+
+/**
+ * Fetches an array of permission IDs granted to the given user ID.
+ *
+ * The implementation here provides only the universal "all" grant. A node
+ * access module should implement hook_node_grants() to provide a grant list for
+ * the user.
+ *
+ * After the default grants have been loaded, we allow modules to alter the
+ * grants array by reference. This hook allows for complex business logic to be
+ * applied when integrating multiple node access modules.
+ *
+ * @param string $operation
+ *   The operation that the user is trying to perform.
+ * @param \Drupal\Core\Session\AccountInterface $account
+ *   The account object for the user performing the operation.
+ *
+ * @return array
+ *   An associative array in which the keys are realms, and the values are
+ *   arrays of grants for those realms.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *    \Drupal::service('Drupal\node\NodeGrantsHelper')->nodeAccessGrants()
+ *    instead.
+ *
+ * @see https://www.drupal.org/node/3578055
+ */
+function node_access_grants($operation, AccountInterface $account) {
+  @trigger_error('node_access_grants() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use  \Drupal::service(\'Drupal\node\NodeGrantsHelper\')->nodeAccessGrants(). See https://www.drupal.org/node/3578055', E_USER_DEPRECATED);
+  return \Drupal::service(NodeGrantsHelper::class)->nodeAccessGrants($operation, $account);
+}
+
+/**
+ * Toggles or reads the value of a flag for rebuilding the node access grants.
+ *
+ * When the flag is set, a message is displayed to users with 'access
+ * administration pages' permission, pointing to the 'rebuild' confirm form.
+ * This can be used as an alternative to direct node_access_rebuild calls,
+ * allowing administrators to decide when they want to perform the actual
+ * (possibly time consuming) rebuild.
+ *
+ * When unsure if the current user is an administrator, node_access_rebuild()
+ * should be used instead.
+ *
+ * @param bool|null $rebuild
+ *   (optional) The boolean value to be written. Defaults to NULL, which returns
+ *   the current value.
+ *
+ * @return bool|null
+ *   The current value of the flag if no value was provided for $rebuild. If a
+ *   value was provided for $rebuild, nothing (NULL) is returned.
+ *
+ * @see node_access_rebuild()
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal::service('\Drupal\node\NodeAccessRebuild')->setNeedsRebuild() and \Drupal::service('\Drupal\node\NodeAccessRebuild')->needsRebuild() instead.
+ * @see https://www.drupal.org/node/3534610
+ */
+function node_access_needs_rebuild($rebuild = NULL) {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal\node\NodeAccessRebuild instead. See https://www.drupal.org/node/3534610', E_USER_DEPRECATED);
+
+  /** @var \Drupal\node\NodeAccessRebuild $accessRebuild */
+  $accessRebuild = \Drupal::service(NodeAccessRebuild::class);
+  if (isset($rebuild)) {
+    $accessRebuild->setNeedsRebuild((bool) $rebuild);
+    return NULL;
+  }
+  return $accessRebuild->needsRebuild();
+}
+
+/**
+ * Rebuilds the node access database.
+ *
+ * This rebuild is occasionally needed by modules that make system-wide changes
+ * to access levels. When the rebuild is required by an admin-triggered action
+ * (e.g module settings form), calling node_access_needs_rebuild(TRUE) instead
+ * of node_access_rebuild() lets the user perform changes and actually rebuild
+ * only once done.
+ *
+ * Note : As of Drupal 6, node access modules are not required to (and actually
+ * should not) call node_access_rebuild() in hook_install/uninstall anymore.
+ *
+ * @param bool $batch_mode
+ *   (optional) Set to TRUE to process in 'batch' mode, spawning processing over
+ *   several HTTP requests (thus avoiding the risk of PHP timeout if the site
+ *   has a large number of nodes). hook_update_N() and any form submit handler
+ *   are safe contexts to use the 'batch mode'. Less decidable cases (such as
+ *   calls from hook_user(), hook_taxonomy(), etc.) might consider using the
+ *   non-batch mode. Defaults to FALSE. Calling this method multiple times in
+ *   the same request with $batch_mode set to TRUE will only result in one batch
+ *   set being added.
+ *
+ * @see node_access_needs_rebuild()
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal::service('\Drupal\node\NodeAccessRebuild')->rebuild($batch_mode) instead.
+ * @see https://www.drupal.org/node/3534610
+ */
+function node_access_rebuild($batch_mode = FALSE): void {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal::service(\'\Drupal\node\NodeAccessRebuild\')->rebuild($batch_mode) instead. See https://www.drupal.org/node/3534610', E_USER_DEPRECATED);
+
+  \Drupal::service(NodeAccessRebuild::class)->rebuild($batch_mode);
+}
+
+/**
+ * @} End of "addtogroup node_access".
+ */

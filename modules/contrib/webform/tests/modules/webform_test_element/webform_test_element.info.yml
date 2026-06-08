@@ -1,0 +1,6 @@
+name: 'Webform Element test'
+type: module
+description: 'Support module for webform element plugin testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

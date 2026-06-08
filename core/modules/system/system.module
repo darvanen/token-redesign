@@ -1,0 +1,229 @@
+<?php
+
+/**
+ * @file
+ */
+
+use Drupal\Component\FileSecurity\FileSecurity;
+use Drupal\Core\Extension\Exception\UnknownExtensionException;
+use Drupal\Core\Extension\Extension;
+use Drupal\Core\Extension\Theme;
+use Drupal\Core\Form\FormStateInterface;
+
+/**
+ * Disabled option on forms and settings.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0.
+ *   Instead, use the enums provided by the relevant modules.
+ *
+ * @see https://www.drupal.org/node/3448089
+ */
+const DRUPAL_DISABLED = 0;
+
+/**
+ * Optional option on forms and settings.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0.
+ *   Instead, use the enums provided by the relevant modules.
+ *
+ * @see https://www.drupal.org/node/3448089
+ */
+const DRUPAL_OPTIONAL = 1;
+
+/**
+ * Required option on forms and settings.
+ *
+ * @deprecated in drupal:11.3.0 and is removed from drupal:13.0.0.
+ *   Instead, use the enums provided by the relevant modules.
+ *
+ * @see https://www.drupal.org/node/3448089
+ */
+const DRUPAL_REQUIRED = 2;
+
+/**
+ * Return only visible regions.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Instead,
+ *   use \Drupal\Core\Extension\Theme::listVisibleRegions().
+ *
+ * @see https://www.drupal.org/node/3015925
+ */
+const REGIONS_VISIBLE = 'visible';
+
+/**
+ * Return all regions.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Instead,
+ *   use \Drupal\Core\Extension\Theme::listAllRegions().
+ *
+ * @see https://www.drupal.org/node/3015925
+ */
+const REGIONS_ALL = 'all';
+
+/**
+ * Checks the existence of the directory specified in $form_element.
+ *
+ * This function is called from the system_settings form to check all core
+ * file directories (file_public_path, file_private_path, file_temporary_path).
+ *
+ * @param array $form_element
+ *   The form element containing the name of the directory to check.
+ * @param \Drupal\Core\Form\FormStateInterface $form_state
+ *   The current state of the form.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. There
+ *   is no replacement.
+ *
+ * @see https://www.drupal.org/node/3566774
+ */
+function system_check_directory($form_element, FormStateInterface $form_state) {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. There is no replacement. See https://www.drupal.org/node/3566774', E_USER_DEPRECATED);
+  $directory = $form_element['#value'];
+  if (strlen($directory) == 0) {
+    return $form_element;
+  }
+
+  $logger = \Drupal::logger('file system');
+  /** @var \Drupal\Core\File\FileSystemInterface $file_system */
+  $file_system = \Drupal::service('file_system');
+  if (!is_dir($directory) && !$file_system->mkdir($directory, NULL, TRUE)) {
+    // If the directory does not exist and cannot be created.
+    $form_state->setErrorByName($form_element['#parents'][0], t('The directory %directory does not exist and could not be created.', ['%directory' => $directory]));
+    $logger->error('The directory %directory does not exist and could not be created.', ['%directory' => $directory]);
+  }
+
+  if (is_dir($directory) && !is_writable($directory) && !$file_system->chmod($directory)) {
+    // If the directory is not writable and cannot be made so.
+    $form_state->setErrorByName($form_element['#parents'][0], t('The directory %directory exists but is not writable and could not be made writable.', ['%directory' => $directory]));
+    $logger->error('The directory %directory exists but is not writable and could not be made writable.', ['%directory' => $directory]);
+  }
+  elseif (is_dir($directory)) {
+    if ($form_element['#name'] == 'file_public_path') {
+      // Create public .htaccess file.
+      FileSecurity::writeHtaccess($directory, FALSE);
+    }
+    else {
+      // Create private .htaccess file.
+      FileSecurity::writeHtaccess($directory);
+    }
+  }
+
+  return $form_element;
+}
+
+/**
+ * Get a list of available regions from a specified theme.
+ *
+ * @param \Drupal\Core\Extension\Extension|string $theme
+ *   A theme extension object, or the name of a theme.
+ * @param string $show
+ *   Possible values: REGIONS_ALL or REGIONS_VISIBLE. Visible excludes hidden
+ *   regions.
+ *
+ * @return string[]
+ *   An array of regions in the form $region['name'] = 'description'.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *   \Drupal::service('theme_handler')->getTheme()->listAllRegions() or
+ *   \Drupal::service('theme_handler')->getTheme()->listVisibleRegions()
+ *   instead.
+ *
+ * @see https://www.drupal.org/node/3015925
+ */
+// @phpstan-ignore-next-line
+function system_region_list($theme, $show = REGIONS_ALL): array {
+  @trigger_error("system_region_list() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal::service('theme_handler')->getTheme()->listAllRegions() or \Drupal::service('theme_handler')->getTheme()->listVisibleRegions() instead. See https://www.drupal.org/node/3015925", E_USER_DEPRECATED);
+  if (!($theme instanceof Theme)) {
+    // For true backwards-compatibility we have to handle the case where this is
+    // passed an extension object created before it has been processed by the
+    // theme handler.
+    if ($theme instanceof Extension) {
+      $theme = $theme->getName();
+    }
+    try {
+      /** @var \Drupal\core\Extension\Theme $theme */
+      $theme = \Drupal::service('theme_handler')->getTheme($theme);
+    }
+    catch (UnknownExtensionException) {
+      return [];
+    }
+  }
+  if ($show === REGIONS_VISIBLE) {
+    return $theme->listVisibleRegions();
+  }
+  return $theme->listAllRegions();
+}
+
+/**
+ * Sorts themes by their names, with the default theme listed first.
+ *
+ * Callback for uasort() within
+ * \Drupal\system\Controller\SystemController::themesPage().
+ *
+ * @see \Drupal\Core\Extension\Extension::sortByName()
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. There
+ *   is no replacement.
+ *
+ * @see https://www.drupal.org/node/3566774
+ */
+function system_sort_themes($a, $b) {
+  @trigger_error(__FUNCTION__ . '() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. There is no replacement. See https://www.drupal.org/node/3566774', E_USER_DEPRECATED);
+  if ($a->is_default) {
+    return -1;
+  }
+  if ($b->is_default) {
+    return 1;
+  }
+  return strcasecmp($a->info['name'], $b->info['name']);
+}
+
+/**
+ * Gets the name of the default region for a given theme.
+ *
+ * @param string $theme
+ *   The name of a theme.
+ *
+ * @return string
+ *   A string that is the region name.
+ *
+ * @deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use
+ *   \Drupal::service('theme_handler')->getTheme()->getDefaultRegion()
+ *   instead.
+ *
+ * @see https://www.drupal.org/node/3015925
+ */
+function system_default_region($theme) {
+  @trigger_error("system_default_region() is deprecated in drupal:11.4.0 and is removed from drupal:13.0.0. Use \Drupal::service('theme_handler')->getTheme()->getDefaultRegion() instead. See https://www.drupal.org/node/3015925", E_USER_DEPRECATED);
+  try {
+    /** @var \Drupal\core\Extension\Theme $theme */
+    $theme = \Drupal::service('theme_handler')->getTheme($theme);
+  }
+  catch (UnknownExtensionException) {
+    return '';
+  }
+  return $theme->getDefaultRegion();
+}
+
+/**
+ * Determines whether the current user is in compact mode.
+ *
+ * Compact mode shows certain administration pages with less description text,
+ * such as the configuration page and the permissions page.
+ *
+ * Whether the user is in compact mode is determined by a cookie, which is set
+ * for the user by \Drupal\system\Controller\SystemController::compactPage().
+ *
+ * If the user does not have the cookie, the default value is given by the
+ * configuration variable 'system.site.admin_compact_mode', which itself
+ * defaults to FALSE. This does not have a user interface to set it: it is a
+ * hidden variable which can be set in the settings.php file.
+ *
+ * @return bool
+ *   TRUE when in compact mode, FALSE when in expanded mode.
+ */
+function system_admin_compact_mode() {
+  // PHP converts dots into underscores in cookie names to avoid problems with
+  // its parser, so we use a converted cookie name.
+  return \Drupal::request()->cookies->get('Drupal_visitor_admin_compact_mode', \Drupal::config('system.site')->get('admin_compact_mode'));
+}

@@ -1,0 +1,27 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - contextual
+    - file
+    - navigation
+    - node
+    - path
+    - system
+id: content_editor
+label: 'Content editor'
+weight: 2
+is_admin: false
+permissions:
+  - 'access administration pages'
+  - 'access content overview'
+  - 'access contextual links'
+  - 'access files overview'
+  - 'access navigation'
+  - 'administer url aliases'
+  - 'create url aliases'
+  - 'delete own files'
+  - 'revert all revisions'
+  - 'view all revisions'
+  - 'view own unpublished content'
+  - 'view the administration theme'

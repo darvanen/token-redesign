@@ -1,0 +1,20 @@
+parameters:
+  update.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  update.manager:
+    class: Drupal\update\UpdateManager
+  Drupal\update\UpdateManagerInterface: '@update.manager'
+  update.processor:
+    class: Drupal\update\UpdateProcessor
+  Drupal\update\UpdateProcessorInterface: '@update.processor'
+  update.fetcher:
+    class: Drupal\update\UpdateFetcher
+  Drupal\update\UpdateFetcherInterface: '@update.fetcher'
+  logger.channel.update:
+    parent: logger.channel_base
+    arguments: [ 'update' ]
+  Drupal\update\MailHandler: ~

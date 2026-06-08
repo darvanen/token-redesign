@@ -1,0 +1,6 @@
+name: 'Webform Validate test'
+type: module
+description: 'Support module for webform validate testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

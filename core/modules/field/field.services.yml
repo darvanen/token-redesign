@@ -1,0 +1,10 @@
+parameters:
+  field.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+
+  field.uninstall_validator:
+    class: Drupal\field\FieldUninstallValidator

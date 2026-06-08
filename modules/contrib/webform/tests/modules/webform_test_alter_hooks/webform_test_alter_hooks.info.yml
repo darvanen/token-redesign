@@ -1,0 +1,6 @@
+name: 'Webform Alter Hooks test'
+type: module
+description: 'Support module for webform form and element alter hooks testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

@@ -1,0 +1,111 @@
+<?php
+
+/**
+ * @file
+ * Hooks related to the File management system.
+ */
+
+use Drupal\Core\StreamWrapper\StreamWrapperManager;
+
+/**
+ * @addtogroup hooks
+ * @{
+ */
+
+/**
+ * Control access to private file downloads and specify HTTP headers.
+ *
+ * This hook allows modules to enforce permissions on file downloads whenever
+ * Drupal is handling file download, as opposed to the web server bypassing
+ * Drupal and returning the file from a public directory. Modules can also
+ * provide headers to specify information like the file's name or MIME type.
+ *
+ * @param string $uri
+ *   The URI of the file.
+ *
+ * @return string[]|int|null
+ *   If the user does not have permission to access the file, return -1. If the
+ *   user has permission, return an array with the appropriate headers. If the
+ *   file is not controlled by the current module, the return value should be
+ *   NULL.
+ *
+ * @see \Drupal\system\FileDownloadController::download()
+ */
+function hook_file_download($uri): array|int|null {
+  // Check to see if this is a config download.
+  $scheme = StreamWrapperManager::getScheme($uri);
+  $target = StreamWrapperManager::getTarget($uri);
+  if ($scheme == 'temporary' && $target == 'config.tar.gz') {
+    return [
+      'Content-disposition' => 'attachment; filename="config.tar.gz"',
+    ];
+  }
+  return NULL;
+}
+
+/**
+ * Alter the URL to a file.
+ *
+ * This hook is called from \Drupal\Core\File\FileUrlGenerator::generate(),
+ * and is called fairly frequently (10+ times per page), depending on how many
+ * files there are in a given page.
+ * If CSS and JS aggregation are disabled, this can become very frequently
+ * (50+ times per page) so performance is critical.
+ *
+ * This function should alter the URI, if it wants to rewrite the file URL.
+ *
+ * @param string $uri
+ *   The URI to a file for which we need an external URL, or the path to a
+ *   shipped file.
+ */
+function hook_file_url_alter(&$uri) {
+  $user = \Drupal::currentUser();
+
+  // User 1 will always see the local file in this example.
+  if ($user->id() == 1) {
+    return;
+  }
+
+  $cdn1 = 'http://cdn1.example.com';
+  $cdn2 = 'http://cdn2.example.com';
+  $cdn_extensions = ['css', 'js', 'gif', 'jpg', 'jpeg', 'png'];
+
+  // Most CDNs don't support private file transfers without a lot of hassle,
+  // so don't support this in the common case.
+  $schemes = ['public'];
+
+  /** @var \Drupal\Core\StreamWrapper\StreamWrapperManagerInterface $stream_wrapper_manager */
+  $stream_wrapper_manager = \Drupal::service('stream_wrapper_manager');
+
+  $scheme = $stream_wrapper_manager::getScheme($uri);
+
+  // Only serve shipped files and public created files from the CDN.
+  if (!$scheme || in_array($scheme, $schemes)) {
+    // Shipped files.
+    if (!$scheme) {
+      $path = $uri;
+    }
+    // Public created files.
+    else {
+      $wrapper = $stream_wrapper_manager->getViaScheme($scheme);
+      $path = $wrapper->getDirectoryPath() . '/' . $stream_wrapper_manager::getTarget($uri);
+    }
+
+    // Clean up Windows paths.
+    $path = str_replace('\\', '/', $path);
+
+    // Serve files with one of the CDN extensions from CDN 1, all others from
+    // CDN 2.
+    $pathinfo = pathinfo($path);
+    if (isset($pathinfo['extension']) && in_array($pathinfo['extension'], $cdn_extensions)) {
+      $uri = $cdn1 . '/' . $path;
+    }
+    else {
+      $uri = $cdn2 . '/' . $path;
+    }
+  }
+}
+
+/**
+ * @} End of "addtogroup hooks".
+ */

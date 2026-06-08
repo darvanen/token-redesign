@@ -1,0 +1,8 @@
+name: 'ECA Circular Dependency Test'
+type: module
+description: 'Test module to demonstrate and test circular dependency fixes in ECA'
+package: Testing
+core_version_requirement: ^11.3 || ^12.0
+dependencies:
+  - eca:eca
+  - eca:eca_content

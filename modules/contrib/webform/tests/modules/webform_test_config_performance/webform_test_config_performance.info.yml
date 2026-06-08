@@ -1,0 +1,6 @@
+name: 'Webform Config Performance test'
+type: module
+description: 'Support module for webform config performance testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

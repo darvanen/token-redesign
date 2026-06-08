@@ -1,0 +1,8 @@
+name: 'ECA File'
+type: module
+description: 'Events, conditions and actions related fo files and file entities.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - eca:eca
+  - drupal:file

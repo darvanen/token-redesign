@@ -1,0 +1,69 @@
+parameters:
+  user.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  access_check.permission:
+    class: Drupal\user\Access\PermissionAccessCheck
+    tags:
+      - { name: access_check, applies_to: _permission }
+  access_check.user.register:
+    class: Drupal\user\Access\RegisterAccessCheck
+    tags:
+      - { name: access_check, applies_to: _access_user_register }
+  access_check.user.role:
+    class: Drupal\user\Access\RoleAccessCheck
+    tags:
+      - { name: access_check, applies_to: _role }
+  access_check.user.login_status:
+    class: Drupal\user\Access\LoginStatusCheck
+    tags:
+      - { name: access_check, applies_to: _user_is_logged_in }
+  user.authentication.cookie:
+    class: Drupal\user\Authentication\Provider\Cookie
+    tags:
+      - { name: authentication_provider, provider_id: 'cookie', priority: 0, global: TRUE }
+  user.data:
+    class: Drupal\user\UserData
+    tags:
+      - { name: backend_overridable }
+  Drupal\user\UserDataInterface: '@user.data'
+  user_maintenance_mode_subscriber:
+    class: Drupal\user\EventSubscriber\MaintenanceModeSubscriber
+  user_access_denied_subscriber:
+    class: Drupal\user\EventSubscriber\AccessDeniedSubscriber
+  user_last_access_subscriber:
+    class: Drupal\user\EventSubscriber\UserRequestSubscriber
+  theme.negotiator.admin_theme:
+    class: Drupal\user\Theme\AdminNegotiator
+    tags:
+      - { name: theme_negotiator, priority: -40 }
+  user.auth:
+    class: Drupal\user\UserAuthentication
+  Drupal\user\UserAuthenticationInterface: '@user.auth'
+  user.permissions:
+    class: Drupal\user\PermissionHandler
+  Drupal\user\PermissionHandlerInterface: '@user.permissions'
+  user.current_user_context:
+    class: Drupal\user\ContextProvider\CurrentUserContext
+    tags:
+      - { name: 'context_provider' }
+  user.toolbar_link_builder:
+    class: Drupal\user\ToolbarLinkBuilder
+  Drupal\user\ToolbarLinkBuilder: '@user.toolbar_link_builder'
+  user.flood_control:
+    class: Drupal\user\UserFloodControl
+  Drupal\user\UserFloodControlInterface: '@user.flood_control'
+  user.flood_subscriber:
+    class: Drupal\user\EventSubscriber\UserFloodSubscriber
+  logger.channel.user:
+    parent: logger.channel_base
+    arguments: ['user']
+  Drupal\user\ModulePermissionsLinkHelper: '@user.module_permissions_link_helper'
+  user.module_permissions_link_helper:
+    class: Drupal\user\ModulePermissionsLinkHelper
+  user.name_validator:
+    class: Drupal\user\UserNameValidator
+  Drupal\user\UserNameValidator: '@user.name_validator'

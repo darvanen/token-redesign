@@ -1,0 +1,5 @@
+type: theme
+base theme: olivero
+name: 'Webform Olivero test'
+description: 'Support theme for webform Olivero integration testing.'
+package: 'Testing'

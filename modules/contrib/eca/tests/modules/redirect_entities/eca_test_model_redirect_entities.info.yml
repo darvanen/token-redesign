@@ -1,0 +1,11 @@
+name: 'ECA model test: Redirect entities'
+type: module
+description: 'Support module for the ECA model tests.'
+package: Testing
+dependencies:
+  - eca:eca_content
+  - redirect:redirect
+
+config_devel:
+  - eca.eca.eca_test_0007
+  - eca.model.eca_test_0007

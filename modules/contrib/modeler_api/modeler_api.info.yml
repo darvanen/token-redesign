@@ -1,0 +1,6 @@
+name: 'Modeler API'
+type: module
+description: 'Provides an API for modules to use modelers like BPMN.iO'
+package: Modeler API
+core_version_requirement: ^11.3 || ^12.0
+configure: modeler_api.settings

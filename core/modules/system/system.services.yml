@@ -1,0 +1,72 @@
+parameters:
+  system.skip_procedural_hook_scan: false
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  access_check.cron:
+    class: Drupal\system\Access\CronAccessCheck
+    tags:
+      - { name: access_check, applies_to: _access_system_cron }
+  access_check.db_update:
+    class: Drupal\system\Access\DbUpdateAccessCheck
+    tags:
+      - { name: access_check, applies_to: _access_system_update }
+  access_check.admin_menu_block_page:
+    class: Drupal\system\Access\SystemAdminMenuBlockAccessCheck
+    tags:
+      - { name: access_check, applies_to: _access_admin_menu_block_page }
+  access_check.admin_overview_page:
+    class: Drupal\system\Access\SystemAdminMenuBlockAccessCheck
+    tags:
+      - { name: access_check, applies_to: _access_admin_overview_page }
+  system.manager:
+    class: Drupal\system\SystemManager
+  Drupal\system\SystemManager: '@system.manager'
+  system.breadcrumb.default:
+    class: Drupal\system\PathBasedBreadcrumbBuilder
+    tags:
+      - { name: breadcrumb_builder, priority: 0 }
+  path_processor.files:
+    class: Drupal\system\PathProcessor\PathProcessorFiles
+    tags:
+      - { name: path_processor_inbound, priority: 200 }
+  system.admin_path.route_subscriber:
+    class: Drupal\system\EventSubscriber\AdminRouteSubscriber
+  theme.negotiator.system.batch:
+    class: Drupal\system\Theme\BatchNegotiator
+    tags:
+      - { name: theme_negotiator, priority: 1000 }
+  theme.negotiator.system.db_update:
+    class: Drupal\system\Theme\DbUpdateNegotiator
+    tags:
+      - { name: theme_negotiator, priority: 100 }
+  Drupal\system\Theme\SystemAdminThemePreprocess:
+    class: Drupal\system\Theme\SystemAdminThemePreprocess
+  system.config_subscriber:
+    class: Drupal\system\SystemConfigSubscriber
+  system.config_cache_tag:
+    class: Drupal\system\EventSubscriber\ConfigCacheTag
+  system.timezone_resolver:
+    class: Drupal\system\TimeZoneResolver
+  system.file_event.subscriber:
+    class: Drupal\system\EventSubscriber\SecurityFileUploadEventSubscriber
+  logger.channel.system:
+    parent: logger.channel_base
+    arguments: ['system']
+  system.sa_fetcher:
+    class: Drupal\system\SecurityAdvisories\SecurityAdvisoriesFetcher
+  Drupal\system\SecurityAdvisories\SecurityAdvisoriesFetcher: '@system.sa_fetcher'
+  system.advisories_config_subscriber:
+    class: Drupal\system\EventSubscriber\AdvisoriesConfigSubscriber
+  Drupal\system\Routing\MenuLinksetRoutes: '@system.menus.route_subscriber'
+  system.menus.route_subscriber:
+    class: Drupal\system\Routing\MenuLinksetRoutes
+    arguments: ['%authentication_providers%', '@config.factory', '@router.builder']
+  Drupal\system\ModuleAdminLinksHelper: '@system.module_admin_links_helper'
+  system.module_admin_links_helper:
+    class: Drupal\system\ModuleAdminLinksHelper
+    arguments: ['@menu.link_tree', '@cache.memory']
+  system.access_route_alter_subscriber:
+    class: Drupal\system\EventSubscriber\AccessRouteAlterSubscriber

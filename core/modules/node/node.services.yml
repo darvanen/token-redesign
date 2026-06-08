@@ -1,0 +1,39 @@
+parameters:
+  node.skip_procedural_hook_scan: true
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+  node.route_subscriber:
+    class: Drupal\node\Routing\RouteSubscriber
+  Drupal\node\NodeGrantsHelper: ~
+  node.grant_storage:
+    class: Drupal\node\NodeGrantDatabaseStorage
+    tags:
+      - { name: backend_overridable }
+  Drupal\node\NodeGrantDatabaseStorageInterface: '@node.grant_storage'
+  access_check.node.preview:
+    class: Drupal\node\Access\NodePreviewAccessCheck
+    tags:
+      - { name: access_check, applies_to: _node_preview_access }
+  node.admin_path.route_subscriber:
+    class: Drupal\node\EventSubscriber\NodeAdminRouteSubscriber
+  node_preview:
+    class: Drupal\node\ParamConverter\NodePreviewConverter
+    tags:
+      - { name: paramconverter }
+  cache_context.user.node_grants:
+    class: Drupal\node\Cache\NodeAccessGrantsCacheContext
+    tags:
+      - { name: cache.context }
+  node.node_route_context:
+    class: Drupal\node\ContextProvider\NodeRouteContext
+    tags:
+      - { name: 'context_provider' }
+  node.view_all_nodes_memory_cache:
+    class: Drupal\Core\Cache\MemoryCache\MemoryCache
+    autowire: true
+  Drupal\node\NodeBulkUpdate:
+    autowire: true
+  Drupal\node\NodeAccessRebuild: ~

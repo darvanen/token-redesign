@@ -1,0 +1,7 @@
+name: 'ECA Menu'
+type: module
+description: 'Additional options for working with menu links.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - eca:eca

@@ -1,0 +1,7 @@
+name: 'Webform Test Bootstrap Helper'
+type: module
+description: 'Support module for webform bootstrap integration testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'
+  - 'webform:webform_bootstrap'

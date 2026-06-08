@@ -1,0 +1,6 @@
+name: 'Webform Wizard Custom test'
+type: module
+description: 'Support module for webform for wizard customization testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'

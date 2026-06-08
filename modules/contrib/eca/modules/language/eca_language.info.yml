@@ -1,0 +1,8 @@
+name: 'ECA Language'
+type: module
+description: 'Advanced language handling within ECA.'
+core_version_requirement: ^11.3 || ^12.0
+package: ECA
+dependencies:
+  - drupal:language
+  - eca:eca

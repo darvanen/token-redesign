@@ -1,0 +1,7 @@
+name: 'Webform Ajax test'
+type: module
+description: 'Support module for webform Ajax testing.'
+package: Testing
+dependencies:
+  - 'drupal:block'
+  - 'webform:webform'

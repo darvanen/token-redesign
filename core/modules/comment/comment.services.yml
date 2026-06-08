@@ -1,0 +1,31 @@
+parameters:
+  comment.skip_procedural_hook_scan: false
+
+services:
+  _defaults:
+    autoconfigure: true
+    autowire: true
+
+  comment.breadcrumb:
+    class: Drupal\comment\CommentBreadcrumbBuilder
+    tags:
+      - { name: breadcrumb_builder, priority: 100 }
+
+  comment.manager:
+    class: Drupal\comment\CommentManager
+  Drupal\comment\CommentManagerInterface: '@comment.manager'
+
+  comment.statistics:
+    autowire: true
+    class: Drupal\comment\CommentStatistics
+    tags:
+      - { name: backend_overridable }
+  Drupal\comment\CommentStatisticsInterface: '@comment.statistics'
+
+  comment.lazy_builders:
+    class: Drupal\comment\CommentLazyBuilders
+  Drupal\comment\CommentLazyBuilders: '@comment.lazy_builders'
+
+  comment.link_builder:
+    class: Drupal\comment\CommentLinkBuilder
+  Drupal\comment\CommentLinkBuilderInterface: '@comment.link_builder'

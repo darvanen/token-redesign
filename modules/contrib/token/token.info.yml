@@ -1,0 +1,4 @@
+name: Token
+type: module
+description: Provides a user interface for the Token API and some missing core tokens.
+core_version_requirement: ^10.3 || ^11 || ^12

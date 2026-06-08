@@ -1,0 +1,6 @@
+name: 'Webform Handler Invoke test'
+type: module
+description: 'Support module for webform handler invoke alter testing.'
+package: Testing
+dependencies:
+  - 'webform:webform'
