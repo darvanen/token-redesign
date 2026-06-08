@@ -1658,6 +1658,11 @@ services:
     class: Drupal\Core\Token\TokenRegistry
     arguments: ['@module_handler', '@cache.default', '@language_manager', '@event_dispatcher', !tagged_iterator token.discovery.auto, !tagged_iterator token.discovery, '@cache_tags.invalidator']
   Drupal\Core\Token\TokenRegistryInterface: '@token.registry'
+  token.entity_type_mapper:
+    class: Drupal\Core\Token\TokenEntityTypeMapper
+  token.context_matcher:
+    class: Drupal\Core\Token\TokenContextMatcher
+    arguments: ['@token.registry', '@token.entity_type_mapper']
   token.resolution_engine:
     class: Drupal\Core\Token\TokenResolutionEngine
     arguments: ['@token.legacy_bridge', '@token.registry', '@token.attributed_discovery', '@current_user', '@token.renderer', '@token.list_delta_resolver', '@language_manager']
