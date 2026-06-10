@@ -14,8 +14,10 @@ use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Render\AttachmentsInterface;
 use Drupal\Core\Render\BubbleableMetadata;
 use Drupal\Core\Render\RendererInterface;
+use Drupal\Core\Token\ChainPrefixMemo;
 use Drupal\Core\Token\LegacyTokenBridge;
 use Drupal\Core\Token\OutputContext;
+use Drupal\Core\Token\TokenResolutionEngine;
 use Drupal\Core\Token\TokenResolutionEngineInterface;
 
 /**
@@ -240,6 +242,113 @@ class Token {
    */
   public function replacePlain(string $plain, array $data = [], array $options = [], ?BubbleableMetadata $bubbleable_metadata = NULL): string {
     return $this->doReplace(FALSE, $plain, $data, $options, $bubbleable_metadata);
+  }
+
+  /**
+   * Replaces tokens in multiple strings in a single batch.
+   *
+   * Equivalent to calling replace() on every element of $texts individually,
+   * but uses a shared chain-prefix memo across all strings so structural
+   * prefix walks are performed only once per batch. This is the recommended
+   * API when replacing many short strings that share chain prefixes (e.g.
+   * Metatag replacing 20–30 per-tag strings against the same node).
+   *
+   * Semantics are identical to replace(): HTML output, same escaping rules,
+   * same 'clear', 'callback', 'langcode', 'viewer', and 'output_context'
+   * option handling.
+   *
+   * @param string[] $texts
+   *   Array of HTML strings keyed by arbitrary caller-defined keys.
+   * @param array $data
+   *   (optional) An array of keyed objects. See replace().
+   * @param array $options
+   *   (optional) A keyed array of options. See replace().
+   * @param \Drupal\Core\Render\BubbleableMetadata|null $bubbleable_metadata
+   *   (optional) Target for adding metadata. See replace().
+   *
+   * @return string[]
+   *   Replaced strings, with the same keys as $texts.
+   */
+  public function replaceMultiple(array $texts, array $data = [], array $options = [], ?BubbleableMetadata $bubbleable_metadata = NULL): array {
+    if (empty($texts)) {
+      return [];
+    }
+
+    // Scan all texts and union their tokens, grouped by type. Deduplication is
+    // inherent: scan() returns unique token-name→raw-token maps per type, and
+    // merging multiple scans with += keeps the first occurrence per key.
+    $allTokensByType = [];
+    foreach ($texts as $text) {
+      foreach ($this->scan((string) $text) as $type => $tokens) {
+        if (!isset($allTokensByType[$type])) {
+          $allTokensByType[$type] = [];
+        }
+        // += keeps the first raw form seen for each token name (they are
+        // identical within one text, and across texts the raw form is the
+        // bracket string which is the same regardless of which text it came
+        // from).
+        $allTokensByType[$type] += $tokens;
+      }
+    }
+
+    if (empty($allTokensByType)) {
+      // No tokens anywhere — return texts unchanged.
+      return $texts;
+    }
+
+    $bubbleable_metadata_is_passed_in = (bool) $bubbleable_metadata;
+    $bubbleable_metadata = $bubbleable_metadata ?: new BubbleableMetadata();
+
+    if (!isset($options['output_context'])) {
+      $options['output_context'] = OutputContext::Html;
+    }
+
+    // One shared memo for the whole batch so prefix walks are amortised.
+    $memo = ($this->resolutionEngine instanceof TokenResolutionEngine)
+      ? new ChainPrefixMemo()
+      : NULL;
+
+    // Resolve all token types once, sharing the memo across all types.
+    $replacements = [];
+    foreach ($allTokensByType as $type => $tokens) {
+      if ($memo !== NULL) {
+        $replacements += $this->resolutionEngine->generateWithMemo($type, $tokens, $data, $options, $bubbleable_metadata, $memo);
+      }
+      else {
+        $replacements += $this->generate($type, $tokens, $data, $options, $bubbleable_metadata);
+      }
+      if (!empty($options['clear'])) {
+        $replacements += array_fill_keys($tokens, '');
+      }
+    }
+
+    // Apply the same escaping as doReplace().
+    foreach ($replacements as $token => $value) {
+      $replacements[$token] = $value instanceof MarkupInterface
+        ? $value
+        : new HtmlEscapedText($value);
+    }
+
+    // Apply the callback if present (same as doReplace()).
+    if (!empty($options['callback'])) {
+      $function = $options['callback'];
+      $function($replacements, $data, $options, $bubbleable_metadata);
+    }
+
+    if (!$bubbleable_metadata_is_passed_in && $this->renderer->hasRenderContext()) {
+      $build = [];
+      $bubbleable_metadata->applyTo($build);
+      $this->renderer->render($build);
+    }
+
+    // Substitute per text, preserving the caller's keys.
+    $result = [];
+    $tokenKeys = array_keys($replacements);
+    $tokenValues = array_values($replacements);
+    foreach ($texts as $key => $text) {
+      $result[$key] = str_replace($tokenKeys, $tokenValues, (string) $text);
+    }
+    return $result;
   }
 
   /**

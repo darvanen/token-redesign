@@ -77,6 +77,36 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
    * {@inheritdoc}
    */
   public function generate(string $type, array $tokens, array $data, array $options, BubbleableMetadata $bubbleable_metadata): array {
+    return $this->generateWithMemo($type, $tokens, $data, $options, $bubbleable_metadata, NULL);
+  }
+
+  /**
+   * Generates replacements with an optional shared chain-prefix memo.
+   *
+   * When $memo is non-NULL the engine will look up and store partial chain
+   * results in it so that shared prefix walks are only performed once per
+   * batch. Called by generate() (which passes NULL) and by Token::replaceMultiple()
+   * (which passes one memo for the whole batch).
+   *
+   * @param string $type
+   *   The token type.
+   * @param array $tokens
+   *   Tokens to replace.
+   * @param array $data
+   *   Keyed data objects.
+   * @param array $options
+   *   Options such as 'langcode' and 'clear'.
+   * @param \Drupal\Core\Render\BubbleableMetadata $bubbleable_metadata
+   *   Accumulator; mutated in place.
+   * @param \Drupal\Core\Token\ChainPrefixMemo|null $memo
+   *   Optional shared prefix memo for this batch. NULL disables memoization.
+   *
+   * @return array
+   *   Replacement values keyed by the raw token string.
+   *
+   * @internal
+   */
+  public function generateWithMemo(string $type, array $tokens, array $data, array $options, BubbleableMetadata $bubbleable_metadata, ?ChainPrefixMemo $memo): array {
     $rootInput = $data[$type] ?? NULL;
 
     // Entities are also reachable under their typed-data input type
@@ -126,7 +156,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       }
 
       $context = new TokenResolutionContext($data, $actor, $outputContext);
-      $result = $this->resolveChain($startType, $segments, $rootInput, $context);
+      $result = $this->resolveChain($startType, $segments, $rootInput, $context, $memo);
 
       if ($result === NULL) {
         // The chain could not be completed structurally; fall through.
@@ -172,7 +202,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
   /**
    * {@inheritdoc}
    */
-  public function resolveChain(string $rootType, array $segments, mixed $rootInput, TokenResolutionContext $context): ?TokenResult {
+  public function resolveChain(string $rootType, array $segments, mixed $rootInput, TokenResolutionContext $context, ?ChainPrefixMemo $memo = NULL): ?TokenResult {
     if (count($segments) > self::MAX_CHAIN_DEPTH) {
       return NULL;
     }
@@ -190,8 +220,31 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       $accumulated = $accumulated->withAccess($rootInput->access('view', $context->actor->viewer, TRUE));
     }
 
+    $startIndex = 0;
+    // Track only the contribution of the prefix segments (cacheability + access
+    // from the resolvers themselves), separate from $accumulated which includes
+    // the root entity access check above. This is what gets stored in and
+    // retrieved from the memo so root entity access is never double-applied.
+    $prefixContribution = TokenResult::fromValue(NULL);
+
+    // Resume from the longest memoized prefix, if any.
+    if ($memo !== NULL) {
+      $hit = $memo->lookup($rootType, $rootInput, $segments);
+      if ($hit !== NULL) {
+        $entry = $hit['entry'];
+        // entry->accumulated holds the prefix contribution only (no root access).
+        // Merge it into $accumulated (which already has root entity access) so
+        // the root access is not double-applied.
+        $accumulated = $accumulated->merge($entry->accumulated);
+        $prefixContribution = $entry->accumulated;
+        $currentInput = $entry->currentInput;
+        $currentType = $entry->currentType;
+        $startIndex = $hit['depth'];
+      }
+    }
+
     $count = count($segments);
-    for ($i = 0; $i < $count; $i++) {
+    for ($i = $startIndex; $i < $count; $i++) {
       $segment = $segments[$i];
       $definition = $this->registry->getResolvableToken($currentType, $segment);
 
@@ -216,8 +269,12 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
 
         $result = $resolver->resolve($currentInput, $arguments, $context);
         $accumulated = $accumulated->merge($result);
+        $prefixContribution = $prefixContribution->merge($result);
         $currentInput = $result->value;
         $currentType = $definition->outputType;
+        if ($memo !== NULL) {
+          $memo->store($rootType, $rootInput, array_slice($segments, 0, $i + 1), $prefixContribution, $currentInput, $currentType);
+        }
         continue;
       }
 
@@ -229,8 +286,55 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       if ($itemType !== NULL && is_numeric($segment)) {
         $result = $this->listDeltaResolver->resolve($currentInput, ['delta' => (int) $segment, 'name' => $segment], $context);
         $accumulated = $accumulated->merge($result);
+        $prefixContribution = $prefixContribution->merge($result);
         $currentInput = $result->value;
         $currentType = $itemType;
+        if ($memo !== NULL) {
+          $memo->store($rootType, $rootInput, array_slice($segments, 0, $i + 1), $prefixContribution, $currentInput, $currentType);
+        }
+        continue;
+      }
+
+      // Rule B — implicit delta-0 coercion: when the current type is a list and
+      // the segment is non-numeric, resolve delta 0 implicitly and re-evaluate
+      // the same segment against the item type. At most one coercion attempt per
+      // segment: if the re-evaluated segment still matches nothing, fall through
+      // to legacy as normal. This makes bare spellings like
+      // [node:field_refs:entity:name] equivalent to
+      // [node:field_refs:0:entity:name].
+      if ($itemType !== NULL) {
+        $deltaResult = $this->listDeltaResolver->resolve($currentInput, ['delta' => 0, 'name' => '0'], $context);
+        $coercedInput = $deltaResult->value;
+        $coercedType = $itemType;
+        $reEvaluatedDefinition = $this->registry->getResolvableToken($coercedType, $segment);
+        if (!$this->isResolvable($reEvaluatedDefinition)) {
+          // The segment still matches nothing on the item type; fall back.
+          return NULL;
+        }
+        // Coercion succeeded: merge the implicit delta result and re-evaluate.
+        $accumulated = $accumulated->merge($deltaResult);
+        $prefixContribution = $prefixContribution->merge($deltaResult);
+        $currentInput = $coercedInput;
+        $currentType = $coercedType;
+        // Memo is NOT stored here because $i is about to be decremented — the
+        // coerced implicit-delta step is not yet a completed segment from the
+        // caller's perspective. The next iteration (same $i, now against item
+        // type) will store after the attributed resolver runs.
+        // Do not advance $i — the loop will re-visit this segment against the
+        // item type on the next iteration. The registered-token branch above
+        // will now match.
+        $i--;
+        continue;
+      }
+
+      // Rule C — identity zero on a non-list type: when the current type is not
+      // a list and the segment is the literal "0", consume the segment without
+      // changing the value or type. This makes ":0:" spellings survive a field
+      // being reconfigured from multi-value back to single-value, because the
+      // single value is already "the zeroth item". Any other numeric segment on
+      // a non-list type has no defined meaning; fall through to legacy.
+      if ($segment === '0') {
+        // Value and type are unchanged; just advance past the segment.
         continue;
       }
 
