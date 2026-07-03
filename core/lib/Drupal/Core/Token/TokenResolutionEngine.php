@@ -51,6 +51,20 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
   private const MAX_CHAIN_DEPTH = 10;
 
   /**
+   * Whether the no-viewer deprecation has fired for this engine instance.
+   *
+   * The engine is a request-scoped service, so instance-level once-guarding
+   * amortizes the trigger_error() cost across a request no matter how many
+   * viewer-less replacements it performs (contrib token's hook
+   * implementations recurse into generate() on every legacy field token, so
+   * per-call firing measurably regressed the legacy path — see the token
+   * replacement benchmark's scenario 4a). Kernel tests build a fresh
+   * container (and thus a fresh engine) per test method, so tests asserting
+   * the deprecation still observe it without any reset hook.
+   */
+  private bool $noViewerDeprecationTriggered = FALSE;
+
+  /**
    * @param \Drupal\Core\Token\LegacyTokenBridge $legacyBridge
    *   The legacy hook pipeline bridge.
    * @param \Drupal\Core\Token\TokenRegistryInterface $registry
@@ -458,7 +472,10 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
     if (($options['viewer'] ?? NULL) instanceof AccountInterface) {
       return new ActorContext($options['viewer']);
     }
-    @trigger_error("Calling Drupal\Core\Utility\Token::replace() without a 'viewer' option is deprecated in drupal:12.0.0 and unenforced token resolution is removed from drupal:13.0.0. Pass options['viewer'] to enable access-checked replacement. See https://www.drupal.org/node/3593502", E_USER_DEPRECATED);
+    if (!$this->noViewerDeprecationTriggered) {
+      $this->noViewerDeprecationTriggered = TRUE;
+      @trigger_error("Calling Drupal\Core\Utility\Token::replace() without a 'viewer' option is deprecated in drupal:12.0.0 and unenforced token resolution is removed from drupal:13.0.0. Pass options['viewer'] to enable access-checked replacement. See https://www.drupal.org/node/3593502", E_USER_DEPRECATED);
+    }
     return new ActorContext(NULL);
   }
 

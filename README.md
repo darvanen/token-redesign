@@ -240,11 +240,13 @@ The honest summary:
   enforcement roughly doubles end-to-end `Token::replace()` time. "Merging
   access results is surprisingly expensive" was predicted in the design
   discussion; these numbers quantify it and make it optimizable.
-- One known cost regression is an open decision: contrib token's internal
-  `generate()` calls carry no viewer, so the new deprecation fires on every
-  legacy field-token resolution (~+24µs/op) - fix candidates are a
-  once-per-request guard on the deprecation, or threading the viewer through
-  contrib token (see Open questions).
+- One cost regression was found and fixed: contrib token's internal
+  `generate()` calls carry no viewer, so the new deprecation fired on every
+  legacy field-token resolution (~+24µs/op). The engine now fires it once per
+  instance (once per request), returning the legacy path to its baseline
+  (10.3µs/op re-measured) while CI and kernel tests still observe the notice.
+  Threading the viewer through contrib token remains the long-term fix (see
+  Open questions).
 
 ## Challenges
 
@@ -316,12 +318,13 @@ work in progress.
   complementary render-time format filter should back the gate for defence in
   depth, is something we need to decide.
 
-- The no-viewer deprecation currently fires on every viewer-less `generate()`
-  call, and contrib token's own field-token internals make such calls on every
-  legacy field-token resolution (~+24µs/op and a noisy log). Options: a
-  once-per-request guard on the deprecation, or threading the viewer through
-  contrib token's helpers (the right long-term fix, and what any
-  heavy token consumer will want to do anyway). Input welcome.
+- The no-viewer deprecation now fires once per engine instance (once per
+  request) rather than per call: contrib token's field-token internals make
+  viewer-less calls on every legacy field-token resolution, and per-call
+  firing cost ~+24µs/op and a noisy log. Threading the viewer through contrib
+  token's helpers is still the right long-term fix (and what any heavy token
+  consumer will want to do anyway); a status-page report of observed
+  viewer-less callers is a possible follow-up. Input welcome.
 
 - Contrib token's `fieldTokenInfoAlter()` is reproduced on the discovery alter
   event ("phase 1"), but the trickier dynamic cases aren't all proven, and the
