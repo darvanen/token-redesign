@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Core\Token;
 
+use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\FieldableEntityInterface;
 use Drupal\Core\Field\FieldItemInterface;
@@ -24,6 +25,10 @@ use Drupal\Core\Field\FieldItemInterface;
  * or hook_entity_field_access) would still have its value leaked. The engine
  * drops the value when the composed access is not allowed.
  *
+ * In the unenforced tier (no viewer; see ActorContext::isEnforced()) the field
+ * access check is skipped and access is unconditionally allowed, reproducing
+ * legacy resolution, which never checked field access at all.
+ *
  * @internal
  */
 final class FieldValueToken implements TokenResolverInterface {
@@ -37,7 +42,6 @@ final class FieldValueToken implements TokenResolverInterface {
       return TokenResult::fromValue('');
     }
 
-    $viewer = $context->actor->viewer;
     $items = $input->get($fieldName);
 
     // Enforce field-level view access for the viewer. This is the check that
@@ -46,7 +50,9 @@ final class FieldValueToken implements TokenResolverInterface {
     // field_permissions / hook_entity_field_access). View access on the entity
     // this field belongs to is established upstream: by the 'entity' deref for
     // traversed entities, and by the caller for the root object.
-    $access = $items->access('view', $viewer, TRUE);
+    $access = $context->actor->isEnforced()
+      ? $items->access('view', $context->actor->viewer, TRUE)
+      : AccessResult::allowed();
 
     $cacheability = new CacheableMetadata();
     $cacheability->addCacheableDependency($input);

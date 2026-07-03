@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\Tests\system\Kernel\Token;
 
 use Drupal\Core\Render\BubbleableMetadata;
+use Drupal\Core\Token\ActorContext;
 use Drupal\Core\Token\LegacyTokenBridge;
 use Drupal\Core\Token\TokenResolutionEngineInterface;
 use Drupal\field\Entity\FieldConfig;
@@ -17,7 +18,7 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 /**
  * Reproducible token-replacement benchmark harness.
  *
- * Measures wall-clock time (hrtime) for five scenarios against the production
+ * Measures wall-clock time (hrtime) for nine scenarios against the production
  * token stack. Each test method passes with normal PHPUnit assertions; timing
  * results are written to a deterministic file path and also included in the
  * last test's assertion message for visibility.
@@ -97,13 +98,18 @@ class TokenReplacementBenchmark extends TokenReplaceKernelTestBase {
    * Absolute path of the consolidated results file for the full benchmark run.
    *
    * Each scenario writes its rows to a per-scenario shard file (named by test
-   * method). The final scenario (testScenario4LegacyVsEngineDispatch) assembles
-   * all shards into this file. Run `ddev exec cat /tmp/token_benchmark_results.txt`
-   * after the benchmark to inspect the complete table.
+   * method), then re-assembles all shards into this file (idempotent — safe
+   * regardless of which scenario's process happens to run last). Run
+   * `ddev exec cat /tmp/token_benchmark_results.txt` after the benchmark to
+   * inspect the complete table.
    *
-   * Scenarios in order: 1 (cold start), 2 (warm single string), 3 (metatag
-   * per-string baseline), 3b (metatag batch via replaceMultiple), 4a/4b
-   * (legacy bridge vs engine direct dispatch).
+   * Scenarios in order: 1 (cold start), 2 (warm single string), 2u (warm
+   * single string, unenforced), 3 (metatag per-string baseline), 3u (metatag
+   * per-string, unenforced), 3b (metatag batch via replaceMultiple), 4a/4b
+   * (legacy bridge vs engine direct dispatch), 4c (engine direct,
+   * unenforced — isolates structural chain-walk cost from access-enforcement
+   * cost), 4d (engine direct, enforced, with a no-op TokenResultAlterEvent
+   * listener registered — isolates listener-present dispatch cost).
    */
   private const RESULTS_FILE = '/tmp/token_benchmark_results.txt';
 
@@ -184,6 +190,18 @@ class TokenReplacementBenchmark extends TokenReplaceKernelTestBase {
     }
     else {
       $this->installEntitySchema('path_alias');
+    }
+
+    // Scenario 4d isolates the marginal cost of ONE registered
+    // TokenResultAlterEvent listener over Scenario 4b/4c's zero-listener
+    // dispatch. Enabling token_context_test here — gated to that one test
+    // method, and before any entities are created so the engine's event
+    // dispatcher (fetched later in this method) is wired to it from the
+    // start — keeps every other scenario's listener landscape at zero
+    // registered subscribers, unchanged from B1, so their numbers stay
+    // comparable.
+    if ($this->name() === 'testScenario4dEngineDirectWithListener') {
+      $this->enableModules(['token_context_test']);
     }
 
     $this->installConfig(['filter', 'node']);
@@ -564,6 +582,213 @@ class TokenReplacementBenchmark extends TokenReplaceKernelTestBase {
     );
   }
 
+  /**
+   * Scenario 4c – engine direct, unenforced tier (access checks skipped).
+   *
+   * Same four field-chain tokens as Scenario 4b, called with 'token_actor'
+   * set to an ActorContext carrying a NULL viewer instead of 'viewer'. Per
+   * TokenResolutionEngine::resolveActor(), an explicit 'token_actor' is
+   * returned verbatim — the deprecation trigger_error only fires when
+   * neither 'token_actor' nor 'viewer' is supplied — so this measures the
+   * unenforced tier's structural chain-walk cost only, uncontaminated by
+   * deprecation-handling overhead.
+   *
+   * Scenario 4b minus Scenario 4c approximates the per-op cost of access
+   * enforcement (root-entity view check, entity-deref check, field-level
+   * view checks) for these four chains.
+   */
+  public function testScenario4cEngineDirectUnenforced(): void {
+    $iterations = $this->iterations();
+    $data = ['node' => $this->node];
+
+    // Same four attributed engine tokens as Scenario 4b.
+    $engine_tokens = [
+      'uid:entity:name'          => '[node:uid:entity:name]',
+      'field_refs:0:entity:name' => '[node:field_refs:0:entity:name]',
+      'field_refs:1:entity:name' => '[node:field_refs:1:entity:name]',
+      'uid:entity:uuid'          => '[node:uid:entity:uuid]',
+    ];
+    $options = ['langcode' => 'en', 'token_actor' => new ActorContext(NULL)];
+
+    // Warm-up to ensure registry slices are populated before timing.
+    $meta = new BubbleableMetadata();
+    $this->engine->generate('node', $engine_tokens, $data, $options, $meta);
+
+    $start = hrtime(TRUE);
+    for ($i = 0; $i < $iterations; $i++) {
+      $meta = new BubbleableMetadata();
+      $result = $this->engine->generate('node', $engine_tokens, $data, $options, $meta);
+    }
+    $total_us = (hrtime(TRUE) - $start) / 1_000;
+
+    $this->assertArrayHasKey('[node:uid:entity:name]', $result, 'Unenforced engine direct must resolve the field-chain token.');
+
+    $this->appendRow(
+      sprintf('Scenario 4c – engine direct unenforced (%d tokens)', count($engine_tokens)),
+      $iterations,
+      $total_us,
+    );
+
+    $this->assembleTable();
+  }
+
+  /**
+   * Scenario 4d – engine direct, enforced, with a no-op listener registered.
+   *
+   * Identical to Scenario 4b except the token_context_test module's
+   * TokenResultAlterEventSubscriber is registered on the event dispatcher
+   * (enabled in setUp(), gated to this scenario only so every other
+   * scenario keeps a zero-listener landscape). The subscriber is left
+   * unconfigured — its default state only records the dispatch in $calls
+   * and never alters the result — so this isolates the marginal cost of ONE
+   * registered listener over Scenario 4b's zero-listener dispatch, i.e. the
+   * per-token TokenResultAlterEvent overhead beyond bare
+   * dispatch-with-no-listeners.
+   */
+  public function testScenario4dEngineDirectWithListener(): void {
+    $iterations = $this->iterations();
+    $data = ['node' => $this->node];
+
+    $engine_tokens = [
+      'uid:entity:name'          => '[node:uid:entity:name]',
+      'field_refs:0:entity:name' => '[node:field_refs:0:entity:name]',
+      'field_refs:1:entity:name' => '[node:field_refs:1:entity:name]',
+      'uid:entity:uuid'          => '[node:uid:entity:uuid]',
+    ];
+    $options = ['langcode' => 'en', 'viewer' => $this->admin];
+
+    // Warm-up to ensure registry slices are populated before timing.
+    $meta = new BubbleableMetadata();
+    $this->engine->generate('node', $engine_tokens, $data, $options, $meta);
+
+    $start = hrtime(TRUE);
+    for ($i = 0; $i < $iterations; $i++) {
+      $meta = new BubbleableMetadata();
+      $result = $this->engine->generate('node', $engine_tokens, $data, $options, $meta);
+    }
+    $total_us = (hrtime(TRUE) - $start) / 1_000;
+
+    $this->assertArrayHasKey('[node:uid:entity:name]', $result, 'Engine direct with listener must resolve the field-chain token.');
+
+    $this->appendRow(
+      sprintf('Scenario 4d – engine direct + no-op listener (%d tokens)', count($engine_tokens)),
+      $iterations,
+      $total_us,
+    );
+
+    $this->assembleTable();
+  }
+
+  /**
+   * Scenario 2u – warm single-string replacement, unenforced tier.
+   *
+   * Identical to Scenario 2 (same string, same six mixed tokens) except
+   * 'token_actor' is set to an ActorContext with a NULL viewer instead of
+   * 'viewer' being set to an admin account. As with Scenario 4c, an explicit
+   * 'token_actor' avoids the deprecation notice regardless of the viewer it
+   * carries. Compare against Scenario 2 to see the end-to-end cost
+   * enforcement adds to a realistic Token::replace() call mixing legacy and
+   * engine tokens.
+   */
+  public function testScenario2uWarmSingleStringUnenforced(): void {
+    $iterations = $this->iterations();
+    $data = ['node' => $this->node];
+    $options = ['token_actor' => new ActorContext(NULL)];
+
+    $text = '[node:title] | [node:nid] | [site:name]'
+      . ' | [node:author:display-name]'
+      . ' | [node:uid:entity:name]'
+      . ' | [node:field_refs:0:entity:name]';
+
+    // Warm-up pass to populate all registry slices before timing.
+    $this->tokenService->replace($text, $data, $options);
+
+    $start = hrtime(TRUE);
+    for ($i = 0; $i < $iterations; $i++) {
+      $result = $this->tokenService->replace($text, $data, $options);
+    }
+    $total_us = (hrtime(TRUE) - $start) / 1_000;
+
+    $this->assertNotEmpty($result ?? '', 'Unenforced warm single-string replace must produce a non-empty result.');
+
+    $this->appendRow('Scenario 2u – warm single string, unenforced', $iterations, $total_us);
+
+    $this->assembleTable();
+  }
+
+  /**
+   * Scenario 3u – metatag-shaped workload, unenforced tier.
+   *
+   * Identical to Scenario 3 (same 25 strings, same node) except replacement
+   * uses 'token_actor' with a NULL-viewer ActorContext instead of 'viewer'.
+   * Compare against Scenario 3 to see the end-to-end enforcement cost on a
+   * realistic per-string metatag-style workload.
+   */
+  public function testScenario3uMetatagShapedUnenforced(): void {
+    $iterations = $this->iterations();
+    $data = ['node' => $this->node];
+    $options = ['token_actor' => new ActorContext(NULL)];
+
+    $strings = [
+      // Legacy node root family.
+      '[node:title]',
+      '[node:nid]',
+      '[node:uuid]',
+      '[node:type]',
+      '[node:langcode]',
+      // Legacy site root family.
+      '[site:name]',
+      '[site:slogan]',
+      '[site:mail]',
+      // Legacy author chain family.
+      '[node:author:display-name]',
+      '[node:author:name]',
+      '[node:author:uid]',
+      '[node:author:mail]',
+      // Engine-path uid:entity chain family (attributed resolver).
+      '[node:uid:entity:name]',
+      '[node:uid:entity:uuid]',
+      '[node:uid:entity:langcode]',
+      // Engine-path field_refs chain – delta 0 (attributed resolver).
+      '[node:field_refs:0:entity:name]',
+      '[node:field_refs:0:entity:uuid]',
+      '[node:field_refs:0:entity:langcode]',
+      // Engine-path field_refs chain – delta 1.
+      '[node:field_refs:1:entity:name]',
+      '[node:field_refs:1:entity:uuid]',
+      '[node:field_refs:1:entity:langcode]',
+      // Mixed strings with one token each (metatag-shaped).
+      'Page: [node:title] — [site:name]',
+      'Author: [node:author:display-name]',
+      'Ref0: [node:field_refs:0:entity:name]',
+      'Ref1: [node:field_refs:1:entity:name]',
+    ];
+
+    // Warm-up iteration to populate all registry slices before timing.
+    foreach ($strings as $text) {
+      $this->tokenService->replace($text, $data, $options);
+    }
+
+    $start = hrtime(TRUE);
+    for ($i = 0; $i < $iterations; $i++) {
+      foreach ($strings as $text) {
+        $result = $this->tokenService->replace($text, $data, $options);
+      }
+    }
+    $total_us = (hrtime(TRUE) - $start) / 1_000;
+    $total_calls = $iterations * count($strings);
+
+    $this->assertNotEmpty($result ?? '', 'Unenforced metatag-shaped replace must produce a non-empty result.');
+
+    $this->appendRow(
+      sprintf('Scenario 3u – metatag-shaped unenforced (%d strings × %d iters)', count($strings), $iterations),
+      $total_calls,
+      $total_us,
+    );
+
+    $this->assembleTable();
+  }
+
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
@@ -641,9 +866,13 @@ class TokenReplacementBenchmark extends TokenReplaceKernelTestBase {
     $scenarios = [
       'testScenario1ColdStart',
       'testScenario2WarmSingleString',
+      'testScenario2uWarmSingleStringUnenforced',
       'testScenario3MetatagShaped',
+      'testScenario3uMetatagShapedUnenforced',
       'testScenario3bMetatagShapedBatch',
       'testScenario4LegacyVsEngineDispatch',
+      'testScenario4cEngineDirectUnenforced',
+      'testScenario4dEngineDirectWithListener',
     ];
 
     $table = $this->buildHeader();

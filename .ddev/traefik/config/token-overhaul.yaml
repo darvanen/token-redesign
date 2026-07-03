@@ -5,6 +5,15 @@
 
 http:
   routers:
+    token-overhaul-xhgui-80-http:
+      entrypoints:
+        - http-8143
+      rule: HostRegexp(`^token-overhaul\.ddev\.site$`)
+      
+      service: "token-overhaul-xhgui-80"
+      tls: false
+      # middlewares:
+      #   - "token-overhaul-redirectHttps"
     token-overhaul-selenium-chrome-7900-http:
       entrypoints:
         - http-7910
@@ -32,16 +41,17 @@ http:
       tls: false
       # middlewares:
       #   - "token-overhaul-redirectHttps"
-    token-overhaul-xhgui-80-http:
+    
+    
+    token-overhaul-xhgui-80-https:
       entrypoints:
-        - http-8143
+        - http-8142
       rule: HostRegexp(`^token-overhaul\.ddev\.site$`)
       
       service: "token-overhaul-xhgui-80"
-      tls: false
-      # middlewares:
-      #   - "token-overhaul-redirectHttps"
-    
+      
+      tls: true
+      
     
     token-overhaul-selenium-chrome-7900-https:
       entrypoints:
@@ -73,16 +83,6 @@ http:
       tls: true
       
     
-    token-overhaul-xhgui-80-https:
-      entrypoints:
-        - http-8142
-      rule: HostRegexp(`^token-overhaul\.ddev\.site$`)
-      
-      service: "token-overhaul-xhgui-80"
-      
-      tls: true
-      
-    
 
   middlewares:
     token-overhaul-redirectHttps:
@@ -91,6 +91,12 @@ http:
         permanent: true
 
   services:
+    token-overhaul-xhgui-80:
+      loadbalancer:
+        servers:
+          - url: http://ddev-token-overhaul-xhgui:80
+        
+    
     token-overhaul-selenium-chrome-7900:
       loadbalancer:
         servers:
@@ -108,12 +114,6 @@ http:
           - url: http://ddev-token-overhaul-web:8025
         
     
-    
-    token-overhaul-xhgui-80:
-      loadbalancer:
-        servers:
-          - url: http://ddev-token-overhaul-xhgui:80
-        
     
     
 

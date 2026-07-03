@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Core\Token;
 
+use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
 
@@ -16,6 +17,10 @@ use Drupal\Core\Entity\EntityInterface;
  * VIEWER's view access on the referenced entity is enforced. The engine drops
  * the chain's value if that access is not allowed, which is what closes the
  * documented token exfiltration vulnerabilities.
+ *
+ * In the unenforced tier (no viewer; see ActorContext::isEnforced()) this check
+ * is skipped and access is unconditionally allowed, reproducing legacy
+ * resolution, which never checked access at all.
  *
  * @internal
  */
@@ -32,7 +37,9 @@ final class EntityDerefToken implements TokenResolverInterface {
     $cacheability = new CacheableMetadata();
     $cacheability->addCacheableDependency($input);
 
-    $access = $input->access('view', $context->actor->viewer, TRUE);
+    $access = $context->actor->isEnforced()
+      ? $input->access('view', $context->actor->viewer, TRUE)
+      : AccessResult::allowed();
     $cacheability->addCacheableDependency($access);
 
     return new TokenResult(

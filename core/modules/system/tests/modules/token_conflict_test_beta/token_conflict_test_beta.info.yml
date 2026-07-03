@@ -1,0 +1,4 @@
+name: 'Token identity conflict test (beta)'
+type: module
+package: Testing
+version: VERSION

@@ -74,3 +74,24 @@ function system_update_12001(): TranslatableMarkup|null {
   }
   return NULL;
 }
+
+/**
+ * Creates system.token, preserving pre-upgrade unverifiable-chain behaviour.
+ */
+function system_update_12002(): void {
+  // system.token only ships as install-time default configuration, so a site
+  // that predates it never receives the file and the object does not exist in
+  // its active storage. TokenPlacementConstraintValidator::hardened() treats a
+  // missing 'harden_placement' value as TRUE, so until this runs an upgrading
+  // site is already being gated as if it were a new install. Persist FALSE
+  // explicitly so existing sites keep allowing what they always allowed for
+  // chains the validator cannot statically verify. This flag has no bearing
+  // on chains that verifiably reach data the author cannot access: that
+  // branch is always on, in every value of this flag, before and after this
+  // update -- it is the security fix, not something an upgrade path is meant
+  // to preserve.
+  $config = \Drupal::configFactory()->getEditable('system.token');
+  if ($config->isNew()) {
+    $config->set('harden_placement', FALSE)->save();
+  }
+}

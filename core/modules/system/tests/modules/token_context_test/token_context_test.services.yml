@@ -1,0 +1,5 @@
+services:
+  token_context_test.result_alter_subscriber:
+    class: Drupal\token_context_test\EventSubscriber\TokenResultAlterEventSubscriber
+    tags:
+      - { name: event_subscriber }

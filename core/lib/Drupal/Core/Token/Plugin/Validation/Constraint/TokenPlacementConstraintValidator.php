@@ -14,6 +14,7 @@ use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\Token\EntityReferenceFieldToken;
 use Drupal\Core\Token\FieldValueToken;
 use Drupal\Core\Token\TokenDefinition;
+use Drupal\Core\Token\TokenEntityTypeMapper;
 use Drupal\Core\Token\TokenRegistryInterface;
 use Drupal\Core\TypedData\TypedDataInterface;
 use Drupal\Core\Utility\Token;
@@ -33,6 +34,14 @@ use Symfony\Component\Validator\ConstraintValidator;
  * A chain that cannot be walked to its end (e.g. a polymorphic reference whose
  * target type is not statically known) is "unverifiable" and is blocked only
  * when placement hardening is on and the author lacks the override permission.
+ *
+ * A root token (input_type '', e.g. current-user) has no first segment of its
+ * own: its identity IS the type being scanned, so its definition is looked up
+ * directly against the type before the per-segment loop starts. Previously
+ * root tokens were invisible to this validator (there was nothing to look up),
+ * so a chain like [current-user:mail] fell through the "unknown first
+ * segment" branch and was left ungated; registering a root definition makes it
+ * walkable from its output type onward, same as any other chain.
  *
  * Gating is on presence, not on what changed: editing content that already
  * contains a restricted token challenges an author who is not entitled to it.
@@ -64,6 +73,7 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
     private readonly EntityFieldManagerInterface $entityFieldManager,
     private readonly AccountInterface $currentUser,
     private readonly ConfigFactoryInterface $configFactory,
+    private readonly TokenEntityTypeMapper $entityTypeMapper,
   ) {}
 
   /**
@@ -77,6 +87,7 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
       $container->get('entity_field.manager'),
       $container->get('current_user'),
       $container->get('config.factory'),
+      $container->get('token.entity_type_mapper'),
     );
   }
 
@@ -161,10 +172,22 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
     $segments = explode(':', $name);
     $definitions = [];
     $currentType = NULL;
-    $count = count($segments);
 
-    for ($i = 0; $i < $count; $i++) {
-      $definition = $this->lookup($currentType, $type, $i, $segments[$i]);
+    // A root definition (input_type '') has no first segment of its own: the
+    // scanned type IS its identity (e.g. 'current-user'), so it is looked up
+    // directly, ahead of the per-segment loop. When one exists, its output
+    // type seeds $currentType, so the loop's first segment is treated the same
+    // as any other continuation of the chain (see lookup()). When none
+    // exists, $currentType stays NULL and the loop falls back to today's
+    // first-segment behaviour (token-type name, then entity input type).
+    $rootDefinition = $this->registry->getResolvableToken('', $type);
+    if ($rootDefinition !== NULL) {
+      $definitions[] = $rootDefinition;
+      $currentType = $rootDefinition->outputType;
+    }
+
+    foreach ($segments as $segment) {
+      $definition = $this->lookup($currentType, $type, $segment);
       if ($definition !== NULL) {
         $definitions[] = $definition;
         // An argument-consuming token swallows the rest of the chain.
@@ -176,14 +199,63 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
       }
 
       // Not a token: a numeric delta on a list advances to the item type.
-      $advanced = $this->advanceNonToken($currentType, $segments[$i]);
+      // Mirrors TokenResolutionEngine::resolveChain()'s numeric-on-list branch
+      // (~lines 347-362).
+      $advanced = $this->advanceNonToken($currentType, $segment);
       if ($advanced !== NULL) {
         $currentType = $advanced;
         continue;
       }
 
-      // The first segment did not resolve to any known token, so this is a
-      // legacy or unknown token, not a chain we entered: leave it ungated.
+      // Rule B — implicit delta-0 coercion. Mirrors
+      // TokenResolutionEngine::resolveChain() (~lines 364-394): when the
+      // current type is a list and the segment is not numeric (numeric was
+      // already handled by advanceNonToken() above), the engine implicitly
+      // resolves delta 0 and re-evaluates the same segment against the item
+      // type, so a bare spelling like [node:field_refs:entity:name] is
+      // equivalent to [node:field_refs:0:entity:name]. At most one coercion
+      // attempt is made. In the engine, whether that attempt succeeds or
+      // fails it never falls through to Rule C (list and non-list are
+      // mutually exclusive there), so this branch always resolves the
+      // segment one way or another before the loop continues.
+      $itemType = $this->listItemType($currentType);
+      if ($itemType !== NULL) {
+        $coerced = $this->lookup($itemType, $type, $segment);
+        if ($coerced !== NULL) {
+          $definitions[] = $coerced;
+          // An argument-consuming token swallows the rest of the chain.
+          if ($coerced->argumentName !== NULL) {
+            return ['definitions' => $definitions, 'unverifiable' => FALSE];
+          }
+          $currentType = $coerced->outputType;
+          continue;
+        }
+        // The engine returns NULL here (falls through to legacy): the
+        // segment still matches nothing on the item type. Resolve the
+        // validator-side outcome for the coerced item type the same way the
+        // final checks below would for any other unmatched segment.
+        if ($this->isScalar($itemType)) {
+          return ['definitions' => $definitions, 'unverifiable' => FALSE];
+        }
+        return ['definitions' => $definitions, 'unverifiable' => TRUE];
+      }
+
+      // Rule C — identity zero on a non-list type. Mirrors
+      // TokenResolutionEngine::resolveChain() (~lines 396-405): when the
+      // current type is not a list (established above: Rule B's branch
+      // already returned/continued for list types) and the segment is the
+      // literal string '0' -- not merely numeric -- consume the segment
+      // without changing the type. The engine restricts this to the literal
+      // '0'; any other numeric segment on a non-list type has no defined
+      // meaning and falls through to the checks below like any other
+      // unmatched segment.
+      if ($segment === '0') {
+        continue;
+      }
+
+      // The first segment did not resolve to any known token (and no root
+      // definition seeded a type either), so this is a legacy or unknown
+      // token, not a chain we entered: leave it ungated.
       if ($currentType === NULL) {
         return ['definitions' => $definitions, 'unverifiable' => FALSE];
       }
@@ -202,20 +274,36 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
 
   /**
    * Looks up the token definition for one segment, advancing the chain.
+   *
+   * @param string|null $currentType
+   *   The output type of the chain so far, or NULL when $segment is the first
+   *   segment of a chain with no root definition (see walk()).
+   * @param string $rootType
+   *   The scanned token type (e.g. 'current-user', 'term'), used only for the
+   *   first-segment fallback lookups below.
+   * @param string $segment
+   *   The chain segment to resolve.
    */
-  private function lookup(?string $currentType, string $rootType, int $index, string $segment): ?TokenDefinition {
-    if ($index > 0) {
-      return $currentType === NULL ? NULL : $this->registry->getResolvableToken($currentType, $segment);
+  private function lookup(?string $currentType, string $rootType, string $segment): ?TokenDefinition {
+    if ($currentType !== NULL) {
+      return $this->registry->getResolvableToken($currentType, $segment);
     }
 
-    // First segment: try the token type name, then its typed-data entity input
-    // type, mirroring how the engine reaches auto-discovered field tokens.
+    // First segment of a chain with no root definition: try the token type
+    // name, then its typed-data entity input type, mirroring how the engine
+    // reaches auto-discovered field tokens. A token type whose name differs
+    // from its entity type id (e.g. 'term' for 'taxonomy_term') is retried
+    // through the mapper before giving up.
     $definition = $this->registry->getResolvableToken($rootType, $segment);
     if ($definition !== NULL) {
       return $definition;
     }
     if ($this->entityTypeManager->hasDefinition($rootType)) {
       return $this->registry->getResolvableToken('entity:' . $rootType, $segment);
+    }
+    $mappedType = $this->entityTypeMapper->getEntityTypeId($rootType);
+    if ($mappedType !== $rootType && $this->entityTypeManager->hasDefinition($mappedType)) {
+      return $this->registry->getResolvableToken('entity:' . $mappedType, $segment);
     }
     return NULL;
   }
@@ -227,10 +315,29 @@ class TokenPlacementConstraintValidator extends ConstraintValidator implements C
     if ($currentType === NULL || !is_numeric($segment)) {
       return NULL;
     }
-    if ($currentType === 'list') {
+    return $this->listItemType($currentType);
+  }
+
+  /**
+   * Returns the item type for a list output type, or NULL when not a list.
+   *
+   * Recognises 'list<T>' (item type T) and a bare 'list' (item type 'string'),
+   * mirroring TokenResolutionEngine::listItemType().
+   *
+   * @param string|null $type
+   *   The output type to inspect, or NULL.
+   *
+   * @return string|null
+   *   The item type, or NULL when $type is not a list type.
+   */
+  private function listItemType(?string $type): ?string {
+    if ($type === NULL) {
+      return NULL;
+    }
+    if ($type === 'list') {
       return 'string';
     }
-    if (preg_match('/^list<(.+)>$/', $currentType, $matches) === 1) {
+    if (preg_match('/^list<(.+)>$/', $type, $matches) === 1) {
       return $matches[1];
     }
     return NULL;

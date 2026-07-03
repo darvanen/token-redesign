@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Core\Token;
 
+use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\FieldableEntityInterface;
 
@@ -19,6 +20,10 @@ use Drupal\Core\Entity\FieldableEntityInterface;
  * The field to read is identified by the token name passed as
  * $arguments['name']. Delta 0 is used; deeper deltas are reached by the numeric
  * index operation the engine applies to list output types.
+ *
+ * In the unenforced tier (no viewer; see ActorContext::isEnforced()) the field
+ * access check is skipped and access is unconditionally allowed, reproducing
+ * legacy resolution, which never checked field access at all.
  *
  * @internal
  */
@@ -39,8 +44,9 @@ final class EntityReferenceFieldToken implements TokenResolverInterface {
     // denied the field cannot traverse through it. View access on the referenced
     // target entity is enforced separately by the downstream 'entity' deref, and
     // view access on the root entity is the caller's responsibility.
-    $viewer = $context->actor->viewer;
-    $access = $items->access('view', $viewer, TRUE);
+    $access = $context->actor->isEnforced()
+      ? $items->access('view', $context->actor->viewer, TRUE)
+      : AccessResult::allowed();
 
     $cacheability = new CacheableMetadata();
     $cacheability->addCacheableDependency($input);

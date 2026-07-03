@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Core\Token;
 
+use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Language\LanguageInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
@@ -11,6 +12,8 @@ use Drupal\Core\Render\BubbleableMetadata;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\Token\Discovery\AttributedTokenDiscovery;
+use Drupal\Core\Token\Event\TokenResultAlterEvent;
+use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 
 /**
  * Orchestrates token chain resolution.
@@ -54,23 +57,23 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
    *   The attributed-resolver registry.
    * @param \Drupal\Core\Token\Discovery\AttributedTokenDiscovery $resolverLocator
    *   Used to retrieve live resolver instances by class name.
-   * @param \Drupal\Core\Session\AccountInterface $currentUser
-   *   The current user, used as the default actor when none is supplied.
    * @param \Drupal\Core\Token\TokenRendererInterface $renderer
    *   Serializes the terminal resolved value for the output context.
    * @param \Drupal\Core\Token\ListDeltaResolver $listDeltaResolver
    *   The built-in resolver invoked for numeric (delta) segments on list types.
    * @param \Drupal\Core\Language\LanguageManagerInterface $languageManager
    *   Supplies the default content language when no langcode is in the options.
+   * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $eventDispatcher
+   *   Dispatches TokenResultAlterEvent once per engine-resolved token.
    */
   public function __construct(
     private readonly LegacyTokenBridge $legacyBridge,
     private readonly TokenRegistryInterface $registry,
     private readonly AttributedTokenDiscovery $resolverLocator,
-    private readonly AccountInterface $currentUser,
     private readonly TokenRendererInterface $renderer,
     private readonly ListDeltaResolver $listDeltaResolver,
     private readonly LanguageManagerInterface $languageManager,
+    private readonly EventDispatcherInterface $eventDispatcher,
   ) {}
 
   /**
@@ -125,6 +128,28 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
     $replacements = [];
     $legacyTokens = [];
 
+    // Root-token engine activation: when the caller supplied no $data entry for
+    // this type, a root definition (input type '', e.g. ":current-user") may
+    // still be able to produce the root value itself, binding the viewer (e.g.
+    // loading the current-user's user entity from the actor rather than from
+    // $data). This only has meaning when there is a viewer to bind: in the
+    // unenforced tier $rootResult stays NULL and every token of this type falls
+    // through to the legacy pipeline below exactly as it did before this
+    // activation existed, which is byte-identical legacy output.
+    $rootDefinition = NULL;
+    $rootResult = NULL;
+    if ($rootInput === NULL && $actor->isEnforced()) {
+      $candidate = $this->registry->getResolvableToken('', $type);
+      if ($this->isResolvable($candidate)) {
+        $rootResolver = $this->resolverLocator->getResolver($candidate->resolverClass);
+        if ($rootResolver !== NULL) {
+          $rootDefinition = $candidate;
+          $rootContext = new TokenResolutionContext($data, $actor, $outputContext);
+          $rootResult = $rootResolver->resolve(NULL, ['name' => $candidate->name, 'path' => $candidate->path], $rootContext);
+        }
+      }
+    }
+
     foreach ($tokens as $name => $raw) {
       $segments = explode(':', $name);
       $firstSegment = $segments[0];
@@ -134,6 +159,8 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       // hook_token_info(). Tokens that are not resolvable here fall through to
       // the legacy hook pipeline.
       $startType = NULL;
+      $chainInput = $rootInput;
+      $fromRootActivation = FALSE;
       if ($this->isResolvable($this->registry->getResolvableToken($type, $firstSegment))) {
         // An attributed resolver registered directly under the legacy type
         // name (an explicit migration), or a non-entity root such as the
@@ -149,6 +176,14 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
         // auto-discovered field tokens of the same name.
         $startType = $entityType;
       }
+      elseif ($rootResult !== NULL) {
+        // Walk the remaining segments from the root definition's own output
+        // type, using the value the root resolver produced (not $rootInput,
+        // which is NULL here) as the chain's starting input.
+        $startType = $rootDefinition->outputType;
+        $chainInput = $rootResult->value;
+        $fromRootActivation = TRUE;
+      }
 
       if ($startType === NULL) {
         $legacyTokens[$name] = $raw;
@@ -156,13 +191,37 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       }
 
       $context = new TokenResolutionContext($data, $actor, $outputContext);
-      $result = $this->resolveChain($startType, $segments, $rootInput, $context, $memo);
+      $result = $this->resolveChain($startType, $segments, $chainInput, $context, $memo);
 
       if ($result === NULL) {
         // The chain could not be completed structurally; fall through.
         $legacyTokens[$name] = $raw;
         continue;
       }
+
+      if ($fromRootActivation) {
+        // Compose the root resolver's own cacheability and access (e.g. the
+        // 'user' cache context and the loaded entity's view access) with the
+        // chain walked from its output type, the same merge() used between any
+        // two segments in resolveChain().
+        $result = $rootResult->merge($result);
+      }
+
+      // Dispatch the alter event now: the composed result is final (root
+      // activation's own contribution merged in, where applicable), but
+      // caller-metadata composition, the access gate, and rendering have not
+      // run yet, so a subscriber's access and cacheability are enforced and
+      // bubbled exactly like a resolver's own contribution would be. This
+      // fires once per engine-resolved token, including tokens resumed from a
+      // memoized chain prefix — the memo only skips recomputation of segments
+      // already walked inside resolveChain(); every token in this loop still
+      // reaches this dispatch exactly once, whether its $result came from a
+      // fresh walk or a memo hit. Tokens that fell through to $legacyTokens
+      // above never reach here; they keep flowing through
+      // hook_tokens_alter() via the legacy bridge below.
+      $event = new TokenResultAlterEvent($raw, $type, $name, $context, $result);
+      $this->eventDispatcher->dispatch($event, TokenResultAlterEvent::RESULT_ALTER);
+      $result = $event->getResult();
 
       // Compose the chain's cacheability and access into the caller's metadata.
       // Access carries its own cache contexts (e.g. 'user'), so it bubbles
@@ -216,8 +275,15 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
     // permitted to view it, which closes root-level exfiltration. Access on
     // entities traversed-to later in the chain is enforced by the 'entity'
     // deref, and field-level access by the field resolvers.
+    // In the unenforced tier (no viewer) this check is skipped and access is
+    // unconditionally allowed, reproducing legacy resolution, which never
+    // checked access at all.
     if ($rootInput instanceof EntityInterface) {
-      $accumulated = $accumulated->withAccess($rootInput->access('view', $context->actor->viewer, TRUE));
+      $accumulated = $accumulated->withAccess(
+        $context->actor->isEnforced()
+          ? $rootInput->access('view', $context->actor->viewer, TRUE)
+          : AccessResult::allowed()
+      );
     }
 
     $startIndex = 0;
@@ -372,8 +438,12 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
    *
    * Supported keys:
    *  - 'token_actor': an explicit ActorContext (used verbatim).
-   *  - 'viewer': an AccountInterface to access-check against.
-   * When neither is supplied the current user is used as the viewer.
+   *  - 'viewer': an AccountInterface to access-check against (enforced tier).
+   * When neither is supplied, resolution runs in the unenforced tier (a NULL
+   * viewer): legacy-equivalent output with no access enforcement anywhere in
+   * the chain, for BC with callers that predate the actor model. This is
+   * deprecated; callers should pass 'viewer' to get access-checked
+   * replacement.
    *
    * @param array<string, mixed> $options
    *   The replacement options.
@@ -385,8 +455,11 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
     if (($options['token_actor'] ?? NULL) instanceof ActorContext) {
       return $options['token_actor'];
     }
-    $viewer = ($options['viewer'] ?? NULL) instanceof AccountInterface ? $options['viewer'] : $this->currentUser;
-    return new ActorContext($viewer);
+    if (($options['viewer'] ?? NULL) instanceof AccountInterface) {
+      return new ActorContext($options['viewer']);
+    }
+    @trigger_error("Calling Drupal\Core\Utility\Token::replace() without a 'viewer' option is deprecated in drupal:12.0.0 and unenforced token resolution is removed from drupal:13.0.0. Pass options['viewer'] to enable access-checked replacement. See https://www.drupal.org/node/3593502", E_USER_DEPRECATED);
+    return new ActorContext(NULL);
   }
 
   /**

