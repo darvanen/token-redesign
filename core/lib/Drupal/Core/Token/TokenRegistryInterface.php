@@ -50,7 +50,17 @@ interface TokenRegistryInterface {
    * so a token replacement never triggers a full hook_token_info() build.
    * Tokens absent here fall through to the legacy hook pipeline.
    *
-   * Returns NULL when no resolvable definition is registered for this identity.
+   * The lookup is by assignability, not exact equality: when $inputType has no
+   * definition of $name, each ancestor of $inputType (produced by
+   * progressively stripping a trailing ':<segment>', e.g. 'entity:node' is an
+   * ancestor of 'entity:node:article') is checked in order, and the first hit
+   * wins. This lets a token declared once against a general type (e.g.
+   * 'entity') serve every more specific type ('entity:node', 'entity:user',
+   * ...), while a same-named declaration against the specific type still takes
+   * precedence. This does not apply to getToken(), which is unaffected.
+   *
+   * Returns NULL when no resolvable definition is registered for this identity
+   * or any of its ancestors.
    */
   public function getResolvableToken(string $inputType, string $name): ?TokenDefinition;
 

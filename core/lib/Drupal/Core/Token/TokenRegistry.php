@@ -146,7 +146,67 @@ final class TokenRegistry implements TokenRegistryInterface {
    * {@inheritdoc}
    */
   public function getResolvableToken(string $inputType, string $name): ?TokenDefinition {
-    return $this->loadSlice($inputType, FALSE)[$name] ?? NULL;
+    $definition = $this->loadSlice($inputType, FALSE)[$name] ?? NULL;
+    if ($definition !== NULL) {
+      return $definition;
+    }
+
+    // Most-specific-wins: the concrete slice missed, so fall back to each
+    // ancestor's slice in order, returning the first hit. This is the resolve
+    // variant only (see loadSlice()'s $includeLegacy parameter): applying the
+    // walk here does not change getToken()'s token-info/browser output.
+    foreach ($this->getTypeAncestors($inputType) as $ancestorType) {
+      $definition = $this->loadSlice($ancestorType, FALSE)[$name] ?? NULL;
+      if ($definition !== NULL) {
+        return $definition;
+      }
+    }
+
+    return NULL;
+  }
+
+  /**
+   * Returns the ancestors of an input type, most specific first.
+   *
+   * An ancestor is produced by progressively stripping the trailing
+   * ':<segment>' from the type string, e.g. 'entity:node:article' yields
+   * ['entity:node', 'entity']; 'entity_reference:user' yields
+   * ['entity_reference']. A colon-free type (including the root type, '') has
+   * no ancestors. Stripping always stops at the last segment: the result never
+   * contains '' and never contains the original type. Parameterized types
+   * (e.g. 'list<entity_reference:user>') have no ancestors either: stripping
+   * at their inner colon would fabricate a nonsense type and pollute the slice
+   * cache; their item type is handled by the engine's list rules, not by
+   * assignability.
+   *
+   * This is the POC's assignability rule for input-type matching, mirroring
+   * typed-data's derivative-ID convention (a plugin ID's ':'-delimited suffix
+   * denotes a more specific variant of its prefix). The eventual integration
+   * point, once this POC graduates, is
+   * \Drupal\Core\Plugin\Context\ContextDefinition::isSatisfiedBy(), which
+   * already expresses the equivalent assignability relation for typed data
+   * definitions.
+   *
+   * @param string $type
+   *   The input type to expand.
+   *
+   * @return string[]
+   *   The ancestor types, most specific first.
+   */
+  private function getTypeAncestors(string $type): array {
+    if (str_contains($type, '<')) {
+      return [];
+    }
+    $ancestors = [];
+    $remaining = $type;
+    while (($position = strrpos($remaining, ':')) !== FALSE) {
+      $remaining = substr($remaining, 0, $position);
+      if ($remaining === '') {
+        break;
+      }
+      $ancestors[] = $remaining;
+    }
+    return $ancestors;
   }
 
   /**
