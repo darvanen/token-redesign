@@ -226,8 +226,8 @@ type's slice is absent. See
 
 There are wall-clock numbers now too, from a reproducible harness
 ([`TokenReplacementBenchmark`](core/modules/system/tests/src/Kernel/Token/TokenReplacementBenchmark.php),
-1000 iterations, results and full methodology to accompany the core issue).
-The honest summary:
+1000 iterations). Full results and methodology are in
+[BENCHMARKS.md](BENCHMARKS.md). The honest summary:
 
 - Batch replacement (`Token::replaceMultiple()` with a shared chain-prefix
   memo) is ≈1.7× faster than per-string replacement on a metatag-shaped
