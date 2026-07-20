@@ -9,6 +9,8 @@ use Drupal\Component\Render\PlainTextOutput;
 use Drupal\Component\Transliteration\TransliterationInterface;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityRepositoryInterface;
+use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 
 /**
@@ -36,10 +38,13 @@ final class TokenRenderer implements TokenRendererInterface {
    *   Used for timestamp → string conversion.
    * @param \Drupal\Component\Transliteration\TransliterationInterface $transliteration
    *   Converts non-ASCII text to an ASCII approximation before slugging.
+   * @param \Drupal\Core\Entity\EntityRepositoryInterface $entityRepository
+   *   Selects the entity translation matching $langcode before labelling.
    */
   public function __construct(
     private readonly DateFormatterInterface $dateFormatter,
     private readonly TransliterationInterface $transliteration,
+    private readonly EntityRepositoryInterface $entityRepository,
   ) {}
 
   /**
@@ -132,6 +137,16 @@ final class TokenRenderer implements TokenRendererInterface {
   private function renderEntity(mixed $entity, OutputContext $context, ?string $langcode): string {
     if (!($entity instanceof EntityInterface)) {
       return '';
+    }
+
+    // Label the translation matching the language the value was resolved for.
+    // The engine hands over already-translated entities, making this a cheap
+    // repeat lookup, but the renderer is a public seam: direct callers may
+    // pass an untranslated entity, and the label is the last point where the
+    // wrong translation could leak into output. A NULL langcode selects the
+    // current content language, mirroring getTranslationFromContext().
+    if ($entity instanceof TranslatableInterface) {
+      $entity = $this->entityRepository->getTranslationFromContext($entity, $langcode);
     }
 
     $label = $entity->label() ?? '';

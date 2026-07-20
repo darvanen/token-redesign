@@ -1613,7 +1613,7 @@ services:
     autowire: true
   token.renderer:
     class: Drupal\Core\Token\TokenRenderer
-    arguments: ['@date.formatter', '@transliteration']
+    arguments: ['@date.formatter', '@transliteration', '@entity.repository']
   Drupal\Core\Token\TokenRendererInterface: '@token.renderer'
   token.legacy_bridge:
     class: Drupal\Core\Token\LegacyTokenBridge
@@ -1665,7 +1665,7 @@ services:
     arguments: ['@token.registry', '@token.entity_type_mapper']
   token.resolution_engine:
     class: Drupal\Core\Token\TokenResolutionEngine
-    arguments: ['@token.legacy_bridge', '@token.registry', '@token.attributed_discovery', '@token.renderer', '@token.list_delta_resolver', '@language_manager', '@event_dispatcher']
+    arguments: ['@token.legacy_bridge', '@token.registry', '@token.attributed_discovery', '@token.renderer', '@token.list_delta_resolver', '@language_manager', '@event_dispatcher', '@entity.repository']
   Drupal\Core\Token\TokenResolutionEngineInterface: '@token.resolution_engine'
   token:
     class: Drupal\Core\Utility\Token

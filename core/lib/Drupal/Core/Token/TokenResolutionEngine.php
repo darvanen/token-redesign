@@ -6,6 +6,8 @@ namespace Drupal\Core\Token;
 
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityRepositoryInterface;
+use Drupal\Core\Entity\TranslatableInterface;
 use Drupal\Core\Language\LanguageInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Render\BubbleableMetadata;
@@ -79,6 +81,9 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
    *   Supplies the default content language when no langcode is in the options.
    * @param \Symfony\Component\EventDispatcher\EventDispatcherInterface $eventDispatcher
    *   Dispatches TokenResultAlterEvent once per engine-resolved token.
+   * @param \Drupal\Core\Entity\EntityRepositoryInterface $entityRepository
+   *   Selects the entity translation matching the resolved language as entity
+   *   values enter and traverse the chain.
    */
   public function __construct(
     private readonly LegacyTokenBridge $legacyBridge,
@@ -88,6 +93,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
     private readonly ListDeltaResolver $listDeltaResolver,
     private readonly LanguageManagerInterface $languageManager,
     private readonly EventDispatcherInterface $eventDispatcher,
+    private readonly EntityRepositoryInterface $entityRepository,
   ) {}
 
   /**
@@ -137,7 +143,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
 
     $actor = $this->resolveActor($options);
     $outputContext = $this->resolveOutputContext($options);
-    $langcode = $this->resolveLangcode($options);
+    [$langcode, $langcodeVariesByRequest] = $this->resolveLangcode($options, $rootInput);
 
     $replacements = [];
     $legacyTokens = [];
@@ -158,7 +164,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
         $rootResolver = $this->resolverLocator->getResolver($candidate->resolverClass);
         if ($rootResolver !== NULL) {
           $rootDefinition = $candidate;
-          $rootContext = new TokenResolutionContext($data, $actor, $outputContext);
+          $rootContext = new TokenResolutionContext($data, $actor, $outputContext, $options, $langcode, $langcodeVariesByRequest);
           $rootResult = $rootResolver->resolve(NULL, ['name' => $candidate->name, 'path' => $candidate->path], $rootContext);
         }
       }
@@ -204,7 +210,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
         continue;
       }
 
-      $context = new TokenResolutionContext($data, $actor, $outputContext);
+      $context = new TokenResolutionContext($data, $actor, $outputContext, $options, $langcode, $langcodeVariesByRequest);
       $result = $this->resolveChain($startType, $segments, $chainInput, $context, $memo);
 
       if ($result === NULL) {
@@ -280,9 +286,18 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       return NULL;
     }
 
+    // Select the root entity's translation for the language being resolved
+    // before anything observes the object: the access check gates the
+    // translation actually shown, and the memo keys on the object's identity,
+    // so the same (already-per-object-cached) translation instance keeps memo
+    // keys stable across the batch. This is the engine counterpart of the
+    // getTranslationFromContext() calls every legacy hook_tokens()
+    // implementation performs on its own.
+    $accumulated = $this->translateResult(TokenResult::fromValue($rootInput), $context);
+    $rootInput = $accumulated->value;
+
     $currentType = $rootType;
     $currentInput = $rootInput;
-    $accumulated = TokenResult::fromValue($rootInput);
 
     // Enforce view access on the root entity against the viewer. The caller
     // provided the object, but token output is still gated on the viewer being
@@ -341,13 +356,13 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
         // [node:created:custom:Y-m-d] case: 'custom' takes 'Y-m-d' as 'format'.
         if ($definition->argumentName !== NULL) {
           $arguments[$definition->argumentName] = implode(':', array_slice($segments, $i + 1));
-          $result = $resolver->resolve($currentInput, $arguments, $context);
+          $result = $this->translateResult($resolver->resolve($currentInput, $arguments, $context), $context);
           $accumulated = $accumulated->merge($result);
           $currentType = $definition->outputType;
           break;
         }
 
-        $result = $resolver->resolve($currentInput, $arguments, $context);
+        $result = $this->translateResult($resolver->resolve($currentInput, $arguments, $context), $context);
         $accumulated = $accumulated->merge($result);
         $prefixContribution = $prefixContribution->merge($result);
         $currentInput = $result->value;
@@ -364,7 +379,8 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       // system-provided token defined against list input types.
       $itemType = $this->listItemType($currentType);
       if ($itemType !== NULL && is_numeric($segment)) {
-        $result = $this->listDeltaResolver->resolve($currentInput, ['delta' => (int) $segment, 'name' => $segment], $context);
+        $deltaArguments = ['delta' => (int) $segment, 'name' => $segment];
+        $result = $this->translateResult($this->listDeltaResolver->resolve($currentInput, $deltaArguments, $context), $context);
         $accumulated = $accumulated->merge($result);
         $prefixContribution = $prefixContribution->merge($result);
         $currentInput = $result->value;
@@ -383,7 +399,8 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       // [node:field_refs:entity:name] equivalent to
       // [node:field_refs:0:entity:name].
       if ($itemType !== NULL) {
-        $deltaResult = $this->listDeltaResolver->resolve($currentInput, ['delta' => 0, 'name' => '0'], $context);
+        $deltaArguments = ['delta' => 0, 'name' => '0'];
+        $deltaResult = $this->translateResult($this->listDeltaResolver->resolve($currentInput, $deltaArguments, $context), $context);
         $coercedInput = $deltaResult->value;
         $coercedType = $itemType;
         $reEvaluatedDefinition = $this->registry->getResolvableToken($coercedType, $segment);
@@ -496,25 +513,89 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
   }
 
   /**
-   * Resolves the language tokens are being rendered for.
+   * Resolves the language tokens are being resolved and rendered for.
    *
-   * Honours the long-standing 'langcode' replacement option, which callers such
-   * as pathauto already set per translation when generating that translation's
-   * alias. When absent, the current content language is used (which itself
-   * falls back to the site default), so locale-sensitive rendering (date
-   * formatting, slug transliteration) matches the language being resolved.
+   * Precedence mirrors the legacy pipeline, where contrib token's field tokens
+   * set the semantics the ecosystem grew around:
+   *  1. The 'langcode' replacement option, which callers such as pathauto set
+   *     per translation when generating that translation's alias. It has
+   *     priority over everything, including the language of the object the
+   *     caller passed.
+   *  2. The root input's own language: passing a specific translation object
+   *     means "resolve in this translation's language", exactly as legacy
+   *     hook implementations honour the active language of the entity they
+   *     receive. This keeps output deterministic in request-less contexts
+   *     (queued mail, cron) where the ambient language is meaningless.
+   *  3. The current content language (which itself falls back to the site
+   *     default), for non-entity roots, so locale-sensitive rendering (date
+   *     formatting, slug transliteration) matches the request's language.
    *
    * @param array<string, mixed> $options
    *   The replacement options.
+   * @param mixed $rootInput
+   *   The root input for this generate() call, used for its language when the
+   *   caller supplied no langcode.
    *
-   * @return string
-   *   The resolved language code.
+   * @return array{string, bool}
+   *   The resolved language code, and TRUE when it came from the current
+   *   content language (case 3) and thus varies by request.
    */
-  private function resolveLangcode(array $options): string {
+  private function resolveLangcode(array $options, mixed $rootInput): array {
     if (is_string($options['langcode'] ?? NULL) && $options['langcode'] !== '') {
-      return $options['langcode'];
+      return [$options['langcode'], FALSE];
     }
-    return $this->languageManager->getCurrentLanguage(LanguageInterface::TYPE_CONTENT)->getId();
+    if ($rootInput instanceof EntityInterface && $rootInput instanceof TranslatableInterface) {
+      return [$rootInput->language()->getId(), FALSE];
+    }
+    return [$this->languageManager->getCurrentLanguage(LanguageInterface::TYPE_CONTENT)->getId(), TRUE];
+  }
+
+  /**
+   * Returns a result with its entity value in the resolution language.
+   *
+   * Non-entity and untranslatable values pass through unchanged. For
+   * translatable content entities this is the engine-side counterpart of the
+   * getTranslationFromContext() call every legacy hook_tokens() implementation
+   * makes for itself (node, user, contrib token's field tokens): the language
+   * fallback rules are identical, and an entity with no matching translation
+   * falls back the same way. Entity translation objects are cached per host
+   * object, so repeated calls return the same instance, which keeps
+   * ChainPrefixMemo's spl_object_id() keying stable within a batch.
+   *
+   * When the langcode fell back to the current content language (see
+   * resolveLangcode() case 3), output for an entity that actually has multiple
+   * translations varies by the request's content language, so the
+   * 'languages:language_content' cache context is composed in — even when this
+   * particular request selected the default translation, since a request in
+   * another language would not. Legacy hook implementations under-declare
+   * this; the engine does not. A langcode pinned by the caller's option or by
+   * the root entity's own language needs no such context.
+   *
+   * @param \Drupal\Core\Token\TokenResult $result
+   *   The result produced by a resolver, or the chain's root value.
+   * @param \Drupal\Core\Token\TokenResolutionContext $context
+   *   The resolution context carrying the resolved langcode.
+   *
+   * @return \Drupal\Core\Token\TokenResult
+   *   The result, with an entity value translated where applicable.
+   */
+  private function translateResult(TokenResult $result, TokenResolutionContext $context): TokenResult {
+    $value = $result->value;
+    if (!($value instanceof EntityInterface && $value instanceof TranslatableInterface)) {
+      return $result;
+    }
+
+    $translated = $this->entityRepository->getTranslationFromContext($value, $context->langcode);
+    $varies = $context->langcodeVariesByRequest && count($value->getTranslationLanguages()) > 1;
+    if ($translated === $value && !$varies) {
+      return $result;
+    }
+
+    $cacheability = clone $result->cacheability;
+    if ($varies) {
+      $cacheability->addCacheContexts(['languages:' . LanguageInterface::TYPE_CONTENT]);
+    }
+    return new TokenResult($translated, $cacheability, $result->access, $result->outputType);
   }
 
   /**

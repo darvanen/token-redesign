@@ -36,12 +36,30 @@ final class TokenResolutionContext {
    *   The intended rendering context.
    * @param array<string, mixed> $options
    *   The replacement options, as passed to Token::replace() (e.g. 'langcode').
+   * @param string|null $langcode
+   *   The language code this resolution runs for: the 'langcode' option when
+   *   the caller supplied one, otherwise the current content language as
+   *   resolved by the engine. Entity values are translated to this language as
+   *   the chain is walked, so resolvers receive the translation matching the
+   *   language being resolved rather than whatever translation the caller
+   *   happened to pass in. NULL only when a context is constructed outside the
+   *   engine without a language; consumers should treat NULL as "current
+   *   content language".
+   * @param bool $langcodeVariesByRequest
+   *   TRUE when $langcode was resolved from the current content language (the
+   *   caller supplied no 'langcode' option and the root input carried no
+   *   language of its own), meaning any translation selected with it varies by
+   *   the request's language and must declare the content language cache
+   *   context. FALSE when the langcode is pinned by the caller or by the root
+   *   entity.
    */
   public function __construct(
     array $data,
     public readonly ActorContext $actor,
     public readonly OutputContext $outputContext = OutputContext::Html,
     private readonly array $options = [],
+    public readonly ?string $langcode = NULL,
+    public readonly bool $langcodeVariesByRequest = FALSE,
   ) {
     $this->data = $data;
   }

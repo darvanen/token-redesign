@@ -7,6 +7,7 @@ namespace Drupal\Tests\Core\Token;
 use Drupal\Component\Transliteration\PhpTransliteration;
 use Drupal\Core\Datetime\DateFormatterInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Token\OutputContext;
 use Drupal\Core\Token\TokenRenderer;
 use Drupal\Tests\UnitTestCase;
@@ -37,9 +38,14 @@ class TokenRendererTest extends UnitTestCase {
       fn (int $timestamp, string $type = 'medium', string $format = '', $timezone = NULL, ?string $langcode = NULL): string =>
         strtoupper($type) . ':' . $timestamp . ($langcode !== NULL ? ':' . $langcode : ''),
     );
+    // Pass entities through untranslated: translation selection is covered by
+    // the kernel-level TokenTranslationTest against real entities; this unit
+    // suite exercises serialization only.
+    $entityRepository = $this->createStub(EntityRepositoryInterface::class);
+    $entityRepository->method('getTranslationFromContext')->willReturnArgument(0);
     // Use the real component transliteration so the slug proof is genuine
     // rather than a faked stub.
-    $this->renderer = new TokenRenderer($dateFormatter, new PhpTransliteration());
+    $this->renderer = new TokenRenderer($dateFormatter, new PhpTransliteration(), $entityRepository);
   }
 
   /**
