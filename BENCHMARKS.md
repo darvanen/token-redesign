@@ -358,3 +358,64 @@ Reproduction:
     (cd modules/contrib/token && git checkout token-overhaul)
     ddev exec cat /tmp/token_multilingual_benchmark_engine.txt
     ddev exec cat /tmp/token_multilingual_benchmark_plain-core.txt
+
+## B4 - the same engine as a contrib module (token_engine), 2026-07-20
+
+Environment: DDEV (OrbStack), PHP 8.5.7, mariadb 11.8, kernel-test context.
+Harness: `modules/contrib/token_engine/tests/src/Kernel/TokenMultilingualBenchmark.php`
+(baseline: module absent, upstream contrib token 85ae736) and
+`TokenMultilingualEngineBenchmark.php` (engine: token_engine enabled, contrib
+token's token-engine branch). Same 80-language workload as B3. Core is
+UNPATCHED upstream 0394ef0b0ab in both runs: in the contrib architecture the
+baseline is simply the module not being enabled.
+
+| Scenario | plain (module absent) | engine (token_engine) |
+|---|---|---|
+| S1 first call per language (median) | 1.69 ms | 2.65 ms |
+| S1 total across all 80 languages | 144.0 ms | 224.6 ms |
+| S2 warm mixed core-token workload | 61.2 µs/string | 92.2 µs/string |
+| S3 token cache after all 80 languages | 1 entry, 463,604 B | 641 entries, 1,462,964 B |
+| **S4 field chains, self-translated, identical output** | **1762.8 µs/string** | **63.2 µs/string** |
+| S4b same workload via replaceMultiple() | unavailable | 12.7 µs/string |
+
+### Interpretation
+
+- **The contrib layer is performance-neutral.** Engine-as-contrib measures
+  within run noise of engine-in-core on every scenario (B3 engine: S2 87.4,
+  S4 58.8, S4b 12.2 µs/string; B4 engine: 92.2 / 63.2 / 12.7). The service
+  takeover is one class swap plus one appended constructor argument; nothing
+  about living in modules/contrib costs measurable time.
+- **The structural story is unchanged from B3:** field chains an order of
+  magnitude faster with identical translated output (asserted in-run), the
+  batch API another ~5× on top, mixed legacy-routed workloads carrying the
+  engine's routing overhead.
+- **Load caveat, stronger than B3's:** the B4 pair ran under visibly heavier
+  container load than B3 (the baseline's own S1/S2 are ~2× B3's plain-core
+  numbers on identical code). Within-pair comparisons hold; cross-pair ratios
+  (and the tempting "28×" from this table) should be quoted as "order of
+  magnitude", nothing more precise.
+
+### The architectural finding worth reading twice
+
+On the core-patch stack, every subclass of core's Token inherited the engine
+by construction. As a contrib module, any OTHER module that subclasses
+`Drupal\Core\Utility\Token` directly (rather than the class actually
+installed on the 'token' service) silently loses the engine members on its
+own instance. eca's token decorator did exactly this: `parent: token` handed
+it the appended engine argument, core's 5-param constructor dropped it, and
+the decorator kept working only because its generate() forwards to the
+engine-wired inner instance - a degradation (no batch API, no output-context
+defaults on the outer instance), not a bypass, but invisible until a
+reflection test pinned it. Fixed by re-parenting eca's CoreToken onto
+`Drupal\token_engine\Token`. Every Token-subclassing module in the ecosystem
+is a potential repeat of this pattern; the core-patch approach makes the
+whole class of bug impossible.
+
+Reproduction (no core checkout dance in this architecture):
+
+    TOKEN_BENCH_LABEL=engine ddev exec vendor/bin/phpunit -c core \
+      modules/contrib/token_engine/tests/src/Kernel/TokenMultilingualEngineBenchmark.php
+    (cd modules/contrib/token && git checkout 85ae736)
+    TOKEN_BENCH_LABEL=plain ddev exec vendor/bin/phpunit -c core \
+      modules/contrib/token_engine/tests/src/Kernel/TokenMultilingualBenchmark.php
+    (cd modules/contrib/token && git checkout token-engine)
