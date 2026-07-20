@@ -255,3 +255,106 @@ cleanly."
 pass unmodified** (see verification below) - the tiered enforcement and
 alter-event changes exercised in this benchmark run do not affect
 correctness, only the performance profile characterised above.
+
+## B3 - multilingual apples-to-apples: plain core vs engine, 80 languages (2026-07-20)
+
+Environment: DDEV (OrbStack), PHP 8.5.7, mariadb 11.8, contrib token module
+ENABLED in both runs, kernel-test context. Harness:
+`core/modules/system/tests/src/Kernel/Token/TokenMultilingualBenchmark.php`.
+Unlike the B1/B2 harness this file references no engine classes and uses only
+the public `Token::replace()` API, so the identical file runs against both
+codebases:
+
+- **plain-core** = core at the branch's upstream base (`0394ef0b0ab`) plus
+  contrib token at its upstream base (`85ae736`). The branch checkout of
+  contrib token registers an event subscriber that references engine classes
+  at container compile time, so both repos must be wound back together.
+- **engine** = token-overhaul HEAD (includes the entity-translation fix
+  `741618e3fc5`) plus contrib token's branch checkout.
+
+Setup: 80 configurable languages (English created explicitly; language_install()
+does not run in kernel tests), one node and one referenced node translated into
+all 80, a 24-string metatag-shaped workload of core-defined tokens, and a
+12-string field-chain workload. The run cycles both the current content
+language and the `langcode` option through all 80 languages.
+
+**The apples-to-apples contract (S4):** the field-chain workload passes the
+UNTRANSLATED root object with an explicit `langcode`, so whichever stack runs
+must select every translation itself: contrib token's hooks call
+getTranslationFromContext() per field token; the engine translates at the root
+and deref boundaries. Both stacks resolve the same tokens to the same
+translated strings, and the harness asserts that output equality in-run. This
+answers B1/B2's standing "scenario 4 is not apples-to-apples" caveat with a
+workload where the work and the output are identical by construction; only the
+machinery differs.
+
+| Scenario | plain-core | engine |
+|---|---|---|
+| S1 first call per language (median) | 0.90 ms | 2.52 ms |
+| S1 total across all 80 languages | 72.3 ms | 208.6 ms |
+| S2 warm mixed core-token workload | 33.8 µs/string | 87.4 µs/string |
+| S3 token cache after all 80 languages | 1 entry, 463,604 B | 641 entries, 1,454,484 B |
+| **S4 field chains, self-translated, identical output** | **747.4 µs/string** | **58.8 µs/string** |
+| S4b same workload via replaceMultiple() | unavailable | 12.2 µs/string |
+
+### Interpretation
+
+- **S4 is the headline and it is a fair one:** ~12.7× faster for identical
+  translated output from identical inputs. The mechanism is structural, not
+  micro-optimisation: contrib token's field tokens recurse into `generate()`
+  at every chain level, and each recursion re-invokes every hook_tokens()
+  implementation on the site plus its own getTranslationFromContext() calls.
+  The engine walks the chain once. Batched, the same workload drops to
+  12.2 µs/string (~61× vs legacy per-string; legacy has no batch API).
+- **S2 is the honest cost side:** on tokens that still route legacy
+  ([node:title], [site:name], date chains), the engine adds ~2.6× overhead.
+  Date chains pay twice: a structural walk that fails at 'custom', then the
+  full legacy dispatch anyway. A negative-routing cache is the obvious
+  optimisation target; until it exists this number should be quoted alongside
+  S4, not hidden behind it.
+- **S1/S3 is the 80-language scaling story:** the engine pays ~2.5 ms and
+  ~8 lazy registry slices (~18 KB serialized) the first time each language is
+  hit, 640 slices / 1.45 MB covering all 80 languages in total. Legacy built
+  one monolithic token_info entry of 463 KB in this run. That single entry is
+  keyed per language on real sites, so 80 interface languages can approach
+  ~37 MB of cache where the engine's total stays 1.45 MB - but note the
+  extrapolation caveat below.
+
+### Caveats (read before quoting)
+
+1. **Run-to-run variance:** S4 numbers are medians over 10 languages in a
+   single run. A verification re-run measured S4 at 70.2 and S4b at
+   30.2 µs/string under container load, so the defensible claim is "roughly
+   10-13× per-string, 25-60× batched", not a single ratio to one decimal.
+2. **The ~37 MB legacy figure is extrapolated, not measured.** This run
+   exercised one interface language on the legacy side (kernel context pins
+   the interface language); the 463 KB entry was observed once. The per-language
+   multiplication is how the legacy cache is keyed, but nobody measured 80
+   copies here.
+3. **Cache sizes are serialized-payload bytes from the kernel test's memory
+   backend** (read via reflection), standing in for what database cache rows
+   would store. Production rows carry additional column overhead.
+4. **S2's translated values come from passing the per-language translation
+   object** (the pathauto pattern), because plain core's node:title never
+   translates from the langcode option alone. Legacy scalar node tokens read
+   whatever object they are handed; only S4 makes both stacks do the
+   translation work themselves.
+5. **Both runs fire the known contrib no-viewer deprecation** (B2 anomaly 1
+   territory: contrib token's internal generate() pass-through carries no
+   viewer). The once-per-engine-instance guard keeps it to one firing per
+   process on the engine side; the plain-core side has no such instrumentation
+   at all. Effect on medians at this workload size is negligible.
+
+Reproduction:
+
+    TOKEN_BENCH_LABEL=engine ddev exec vendor/bin/phpunit -c core \
+      core/modules/system/tests/src/Kernel/Token/TokenMultilingualBenchmark.php
+    # then wind back BOTH repos and rerun as plain-core:
+    git checkout 0394ef0b0ab -- core
+    (cd modules/contrib/token && git checkout 85ae736)
+    TOKEN_BENCH_LABEL=plain-core ddev exec vendor/bin/phpunit -c core \
+      core/modules/system/tests/src/Kernel/Token/TokenMultilingualBenchmark.php
+    git checkout token-overhaul -- core
+    (cd modules/contrib/token && git checkout token-overhaul)
+    ddev exec cat /tmp/token_multilingual_benchmark_engine.txt
+    ddev exec cat /tmp/token_multilingual_benchmark_plain-core.txt
