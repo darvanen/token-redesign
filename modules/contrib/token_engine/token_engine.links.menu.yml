@@ -1,0 +1,5 @@
+token_engine.settings:
+  title: 'Token Engine'
+  description: 'Choose the placement-hardening posture and review unenforced token usage.'
+  route_name: token_engine.settings
+  parent: system.admin_config_system

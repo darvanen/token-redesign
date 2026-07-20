@@ -7,3 +7,4 @@ dependencies:
   - drupal:system
   - drupal:user
   - modeler_api:modeler_api
+  - token_engine:token_engine

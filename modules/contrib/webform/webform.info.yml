@@ -8,3 +8,4 @@ dependencies:
   - 'drupal:field'
   - 'drupal:filter'
   - 'drupal:user'
+  - 'token_engine:token_engine'

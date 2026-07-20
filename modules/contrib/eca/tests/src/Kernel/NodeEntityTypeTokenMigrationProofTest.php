@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Drupal\Tests\eca\Kernel;
 
 use Drupal\Core\Render\BubbleableMetadata;
-use Drupal\Core\Token\ActorContext;
-use Drupal\Core\Token\OutputContext;
-use Drupal\Core\Token\TokenResolutionContext;
 use Drupal\eca\Plugin\Token\NodeEntityTypeToken;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\node\Entity\Node;
 use Drupal\Tests\node\Traits\ContentTypeCreationTrait;
+use Drupal\token_engine\ActorContext;
+use Drupal\token_engine\OutputContext;
+use Drupal\token_engine\TokenResolutionContext;
 use Drupal\user\Entity\Role;
 use Drupal\user\RoleInterface;
 use PHPUnit\Framework\Attributes\Group;
@@ -52,6 +52,7 @@ class NodeEntityTypeTokenMigrationProofTest extends KernelTestBase {
     'node',
     'eca',
     'modeler_api',
+    'token_engine',
   ];
 
   /**
@@ -94,7 +95,7 @@ class NodeEntityTypeTokenMigrationProofTest extends KernelTestBase {
   public function testResolverProducesValueInIsolation(): void {
     // The resolver is an attributed Plugin\Token plugin, created lazily by the
     // token resolver plugin manager.
-    $resolver = $this->container->get('plugin.manager.token_resolver')->createInstance('node:entity_type');
+    $resolver = $this->container->get('plugin.manager.token_engine_resolver')->createInstance('node:entity_type');
     $this->assertInstanceOf(NodeEntityTypeToken::class, $resolver);
 
     $result = $resolver->resolve($this->createNode(), ['name' => 'entity_type'], $this->context());
@@ -108,8 +109,8 @@ class NodeEntityTypeTokenMigrationProofTest extends KernelTestBase {
    * Proof 2: the engine routes (node, entity_type) to the migrated resolver.
    */
   public function testEngineRoutesTokenToResolver(): void {
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('node', 'entity_type');
 
     $this->assertNotNull($definition, 'The token is registered as a resolvable new-system token.');
@@ -133,8 +134,8 @@ class NodeEntityTypeTokenMigrationProofTest extends KernelTestBase {
 
     $engine = \Drupal::token()->generate('node', $tokens, $data, [], new BubbleableMetadata());
 
-    /** @var \Drupal\Core\Token\LegacyTokenBridge $bridge */
-    $bridge = $this->container->get('token.legacy_bridge');
+    /** @var \Drupal\token_engine\LegacyTokenBridge $bridge */
+    $bridge = $this->container->get('token_engine.legacy_bridge');
     $legacy = $bridge->generate('node', $tokens, $data, [], new BubbleableMetadata());
 
     $this->assertSame(

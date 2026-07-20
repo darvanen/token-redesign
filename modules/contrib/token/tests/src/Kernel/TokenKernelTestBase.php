@@ -17,6 +17,9 @@ abstract class TokenKernelTestBase extends KernelTestBase {
    */
   protected static $modules = [
     'path',
+    // Kernel tests do not resolve info.yml dependencies, so token's hard
+    // dependency on token_engine must be listed explicitly.
+    'token_engine',
     'token',
     'token_module_test',
     'system',

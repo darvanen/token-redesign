@@ -68,6 +68,7 @@ class EntityTypeTokenAssignabilityTest extends KernelTestBase {
     'node',
     'eca',
     'modeler_api',
+    'token_engine',
   ];
 
   /**
@@ -121,8 +122,8 @@ class EntityTypeTokenAssignabilityTest extends KernelTestBase {
     $result = \Drupal::token()->replace('[node:uid:entity:entity_type]', ['node' => $node]);
     $this->assertSame('user', $result, 'The generic entity_type resolver resolves at entity:user through the ancestor walk.');
 
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('entity:user', 'entity_type');
 
     $this->assertNotNull($definition, 'The (entity:user, entity_type) lookup resolves via the ancestor walk.');
@@ -145,8 +146,8 @@ class EntityTypeTokenAssignabilityTest extends KernelTestBase {
     $result = \Drupal::token()->replace('[node:entity_type]', ['node' => $node]);
     $this->assertSame('node', $result, 'The [node:entity_type] output is unchanged by the new generic resolver.');
 
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('node', 'entity_type');
 
     $this->assertNotNull($definition, 'The (node, entity_type) token remains resolvable on the new engine.');
@@ -170,14 +171,14 @@ class EntityTypeTokenAssignabilityTest extends KernelTestBase {
     $data = ['user' => $user];
     $tokens = ['entity_type' => '[user:entity_type]'];
 
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $this->assertNull($registry->getResolvableToken('user', 'entity_type'), 'The engine does not claim the root position on user; no resolvable definition exists there.');
 
     $engine = \Drupal::token()->generate('user', $tokens, $data, [], new BubbleableMetadata());
 
-    /** @var \Drupal\Core\Token\LegacyTokenBridge $bridge */
-    $bridge = $this->container->get('token.legacy_bridge');
+    /** @var \Drupal\token_engine\LegacyTokenBridge $bridge */
+    $bridge = $this->container->get('token_engine.legacy_bridge');
     $legacy = $bridge->generate('user', $tokens, $data, [], new BubbleableMetadata());
 
     $this->assertSame(

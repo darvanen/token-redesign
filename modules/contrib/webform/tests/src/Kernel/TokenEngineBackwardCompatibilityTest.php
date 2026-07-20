@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Drupal\Tests\webform\Kernel;
 
 use Drupal\Core\Render\BubbleableMetadata;
@@ -37,6 +39,7 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     'user',
     'field',
     'filter',
+    'token_engine',
     'webform',
   ];
 
@@ -55,7 +58,7 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
   /**
    * Verifies hook_token_info() registers webform token types and tokens.
    *
-   * hook_token_info() is invoked by Token::getInfo(), which is not affected by
+   * Hook_token_info() is invoked by Token::getInfo(), which is not affected by
    * the new engine. This test confirms the hook is still reachable.
    */
   public function testWebformTokenInfoRegistered(): void {
@@ -231,8 +234,8 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
    * legacy hook bridge.
    */
   public function testWebformIdTokenResolverRegistered(): void {
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('webform', 'id');
 
     $this->assertNotNull($definition, 'The [webform:id] token must be registered as an attributed resolver.');

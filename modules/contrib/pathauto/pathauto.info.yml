@@ -6,6 +6,7 @@ type: module
 dependencies:
   - drupal:path
   - token:token
+  - token_engine:token_engine
 
 configure: entity.pathauto_pattern.collection
 

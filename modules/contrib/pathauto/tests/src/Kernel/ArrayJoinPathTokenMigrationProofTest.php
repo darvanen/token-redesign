@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace Drupal\Tests\pathauto\Kernel;
 
 use Drupal\Core\Render\BubbleableMetadata;
-use Drupal\Core\Token\ActorContext;
-use Drupal\Core\Token\OutputContext;
-use Drupal\Core\Token\TokenResolutionContext;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\node\Entity\NodeType;
 use Drupal\pathauto\Plugin\Token\ArrayJoinPathToken;
+use Drupal\token_engine\ActorContext;
+use Drupal\token_engine\OutputContext;
+use Drupal\token_engine\TokenResolutionContext;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -43,6 +43,7 @@ class ArrayJoinPathTokenMigrationProofTest extends KernelTestBase {
     'node',
     'path',
     'path_alias',
+    'token_engine',
     'pathauto',
     'system',
     'text',
@@ -80,7 +81,7 @@ class ArrayJoinPathTokenMigrationProofTest extends KernelTestBase {
   public function testResolverProducesValueInIsolation(): void {
     // The resolver is an attributed Plugin\Token plugin, created lazily by the
     // token resolver plugin manager (with dependency injection via create()).
-    $resolver = $this->container->get('plugin.manager.token_resolver')->createInstance('array:join-path');
+    $resolver = $this->container->get('plugin.manager.token_engine_resolver')->createInstance('array:join-path');
     $this->assertInstanceOf(ArrayJoinPathToken::class, $resolver);
 
     $result = $resolver->resolve(['First Item', 'Second Item'], ['name' => 'join-path'], $this->context());
@@ -94,8 +95,8 @@ class ArrayJoinPathTokenMigrationProofTest extends KernelTestBase {
    * Proof 2: the engine routes (array, join-path) to the migrated resolver.
    */
   public function testEngineRoutesTokenToResolver(): void {
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('array', 'join-path');
 
     $this->assertNotNull($definition, 'The token is registered as a resolvable new-system token.');
@@ -119,8 +120,8 @@ class ArrayJoinPathTokenMigrationProofTest extends KernelTestBase {
 
     $engine = \Drupal::token()->generate('array', $tokens, $data, [], new BubbleableMetadata());
 
-    /** @var \Drupal\Core\Token\LegacyTokenBridge $bridge */
-    $bridge = $this->container->get('token.legacy_bridge');
+    /** @var \Drupal\token_engine\LegacyTokenBridge $bridge */
+    $bridge = $this->container->get('token_engine.legacy_bridge');
     $legacy = $bridge->generate('array', $tokens, $data, [], new BubbleableMetadata());
 
     $this->assertSame(

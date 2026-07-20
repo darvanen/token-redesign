@@ -7,10 +7,10 @@ namespace Drupal\webform\Plugin\Token;
 use Drupal\Core\Access\AccessResult;
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
-use Drupal\Core\Token\Attribute\Token;
-use Drupal\Core\Token\TokenResolutionContext;
-use Drupal\Core\Token\TokenResolverInterface;
-use Drupal\Core\Token\TokenResult;
+use Drupal\token_engine\Attribute\Token;
+use Drupal\token_engine\TokenResolutionContext;
+use Drupal\token_engine\TokenResolverInterface;
+use Drupal\token_engine\TokenResult;
 use Drupal\webform\WebformInterface;
 
 /**

@@ -1,0 +1,6 @@
+name: Token Engine
+type: module
+description: 'Structural, access-aware token resolution engine. Replaces the token replacement pipeline with typed, chainable token resolvers, viewer-based access enforcement, and an author-side placement gate.'
+package: Token
+core_version_requirement: ^11
+configure: token_engine.settings

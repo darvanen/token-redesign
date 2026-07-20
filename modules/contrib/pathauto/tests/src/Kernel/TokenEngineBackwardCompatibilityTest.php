@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\pathauto\Kernel;
 
+use Drupal\pathauto\Plugin\Token\ArrayJoinPathToken;
 use Drupal\Core\Render\BubbleableMetadata;
-use Drupal\Core\Token\TokenResolutionEngineInterface;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\pathauto\Entity\PathautoPattern;
 use Drupal\Tests\pathauto\Functional\PathautoTestHelperTrait;
+use Drupal\token_engine\TokenResolutionEngineInterface;
 use Drupal\user\Entity\User;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -41,6 +42,7 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     'node',
     'path',
     'path_alias',
+    'token_engine',
     'pathauto',
     'system',
     'text',
@@ -64,17 +66,17 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
   }
 
   /**
-   * Tests that the token.resolution_engine service is present in the container.
+   * Tests that the token_engine.resolution_engine service is present.
    *
    * This confirms that core has wired the new engine and that pathauto's test
    * environment inherits it without any extra configuration.
    */
   public function testResolutionEngineServiceIsRegistered(): void {
-    $engine = $this->container->get('token.resolution_engine');
+    $engine = $this->container->get('token_engine.resolution_engine');
     $this->assertInstanceOf(
       TokenResolutionEngineInterface::class,
       $engine,
-      'The token.resolution_engine service resolves to a TokenResolutionEngineInterface.'
+      'The token_engine.resolution_engine service resolves to a TokenResolutionEngineInterface.'
     );
   }
 
@@ -175,8 +177,8 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     $engineReplacements = \Drupal::token()->generate($type, $tokens, $data, $options, $engineMetadata);
 
     // Resolution via the legacy bridge directly.
-    /** @var \Drupal\Core\Token\LegacyTokenBridge $bridge */
-    $bridge = $this->container->get('token.legacy_bridge');
+    /** @var \Drupal\token_engine\LegacyTokenBridge $bridge */
+    $bridge = $this->container->get('token_engine.legacy_bridge');
     $bridgeMetadata = new BubbleableMetadata();
     $bridgeReplacements = $bridge->generate($type, $tokens, $data, $options, $bridgeMetadata);
 
@@ -230,8 +232,8 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     $engineMetadata = new BubbleableMetadata();
     $engineReplacements = \Drupal::token()->generate($type, $tokens, $data, $options, $engineMetadata);
 
-    /** @var \Drupal\Core\Token\LegacyTokenBridge $bridge */
-    $bridge = $this->container->get('token.legacy_bridge');
+    /** @var \Drupal\token_engine\LegacyTokenBridge $bridge */
+    $bridge = $this->container->get('token_engine.legacy_bridge');
     $bridgeMetadata = new BubbleableMetadata();
     $bridgeReplacements = $bridge->generate($type, $tokens, $data, $options, $bridgeMetadata);
 
@@ -250,13 +252,13 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
    * via ArrayJoinPathToken, not through the legacy hook fallback.
    */
   public function testJoinPathIsMigratedToAttributedResolver(): void {
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
     $definition = $registry->getResolvableToken('array', 'join-path');
 
     $this->assertNotNull($definition, 'The [array:join-path] token is registered as a resolvable (new-system) token.');
     $this->assertSame(
-      \Drupal\pathauto\Plugin\Token\ArrayJoinPathToken::class,
+      ArrayJoinPathToken::class,
       $definition->resolverClass,
       'The [array:join-path] token is backed by the migrated attributed resolver.'
     );

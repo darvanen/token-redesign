@@ -4,18 +4,19 @@ declare(strict_types=1);
 
 namespace Drupal\token\EventSubscriber;
 
+use Drupal\Core\TypedData\DataDefinitionInterface;
 use Drupal\Component\Utility\Html;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Field\FieldStorageDefinitionInterface;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
-use Drupal\Core\Token\Event\TokenDiscoveryAlterEvent;
-use Drupal\Core\Token\TokenDefinition;
 use Drupal\Core\TypedData\DataReferenceDefinitionInterface;
 use Drupal\Core\TypedData\PrimitiveInterface;
 use Drupal\field\FieldStorageConfigInterface;
 use Drupal\token\TokenEntityMapperInterface;
+use Drupal\token_engine\Event\TokenDiscoveryAlterEvent;
+use Drupal\token_engine\TokenDefinition;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 /**
@@ -109,7 +110,7 @@ final class FieldTokenDiscoverySubscriber implements EventSubscriberInterface {
   /**
    * Adds field-level token definitions for a single content entity type.
    *
-   * @param \Drupal\Core\Token\Event\TokenDiscoveryAlterEvent $event
+   * @param \Drupal\token_engine\Event\TokenDiscoveryAlterEvent $event
    *   The alter event.
    * @param string $entityTypeId
    *   The entity type ID (e.g. 'node').
@@ -227,7 +228,7 @@ final class FieldTokenDiscoverySubscriber implements EventSubscriberInterface {
       elseif ($propertyDefinition instanceof DataReferenceDefinitionInterface) {
         $target = $propertyDefinition->getTargetDefinition();
         if ($target->getDataType() === 'entity') {
-          $referencedEntityType = $target instanceof \Drupal\Core\TypedData\DataDefinitionInterface
+          $referencedEntityType = $target instanceof DataDefinitionInterface
             ? (method_exists($target, 'getEntityTypeId') ? $target->getEntityTypeId() : NULL)
             : NULL;
           if ($referencedEntityType) {

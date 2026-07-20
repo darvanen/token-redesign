@@ -14,11 +14,6 @@ use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Render\AttachmentsInterface;
 use Drupal\Core\Render\BubbleableMetadata;
 use Drupal\Core\Render\RendererInterface;
-use Drupal\Core\Token\ChainPrefixMemo;
-use Drupal\Core\Token\LegacyTokenBridge;
-use Drupal\Core\Token\OutputContext;
-use Drupal\Core\Token\TokenResolutionEngine;
-use Drupal\Core\Token\TokenResolutionEngineInterface;
 
 /**
  * Drupal placeholder/token replacement system.
@@ -120,13 +115,6 @@ class Token {
   protected $renderer;
 
   /**
-   * The token resolution engine.
-   *
-   * @var \Drupal\Core\Token\TokenResolutionEngineInterface|null
-   */
-  protected ?TokenResolutionEngineInterface $resolutionEngine;
-
-  /**
    * Constructs a new class instance.
    *
    * @param \Drupal\Core\Extension\ModuleHandlerInterface $module_handler
@@ -139,18 +127,13 @@ class Token {
    *   The cache tags invalidator.
    * @param \Drupal\Core\Render\RendererInterface $renderer
    *   The renderer.
-   * @param \Drupal\Core\Token\TokenResolutionEngineInterface|null $resolution_engine
-   *   The token resolution engine. When NULL (e.g. in tests or subclasses that
-   *   call parent::__construct() with 5 arguments), generate() falls back to
-   *   invoking the legacy hook pipeline directly via LegacyTokenBridge.
    */
-  public function __construct(ModuleHandlerInterface $module_handler, CacheBackendInterface $cache, LanguageManagerInterface $language_manager, CacheTagsInvalidatorInterface $cache_tags_invalidator, RendererInterface $renderer, ?TokenResolutionEngineInterface $resolution_engine = NULL) {
+  public function __construct(ModuleHandlerInterface $module_handler, CacheBackendInterface $cache, LanguageManagerInterface $language_manager, CacheTagsInvalidatorInterface $cache_tags_invalidator, RendererInterface $renderer) {
     $this->cache = $cache;
     $this->languageManager = $language_manager;
     $this->moduleHandler = $module_handler;
     $this->cacheTagsInvalidator = $cache_tags_invalidator;
     $this->renderer = $renderer;
-    $this->resolutionEngine = $resolution_engine;
   }
 
   /**
@@ -177,19 +160,6 @@ class Token {
    *     reference, the data, and the options as parameters.
    *   - clear: A boolean flag indicating that tokens should be removed from the
    *     final text if no replacement value can be generated.
-   *   The following options are honoured by the token resolution engine for
-   *   tokens served by attributed resolvers; legacy hook_tokens() implementations
-   *   ignore them:
-   *   - viewer: (optional) An \Drupal\Core\Session\AccountInterface that token
-   *     access is checked against. Defaults to the current user. Set this when
-   *     the output is consumed by someone other than the current request user,
-   *     for example the recipient of a queued email.
-   *   - token_actor: (optional) A \Drupal\Core\Token\ActorContext supplying the
-   *     viewer. Takes precedence over 'viewer'.
-   *   - output_context: (optional) A \Drupal\Core\Token\OutputContext case
-   *     selecting how resolved values are serialized (HTML, plain text, URL
-   *     slug, email subject). Defaults to HTML for replace() and plain text for
-   *     replacePlain().
    * @param \Drupal\Core\Render\BubbleableMetadata|null $bubbleable_metadata
    *   (optional) An object to which static::generate() and the hooks and
    *   functions that it invokes will add their required bubbleable metadata.
@@ -245,113 +215,6 @@ class Token {
   }
 
   /**
-   * Replaces tokens in multiple strings in a single batch.
-   *
-   * Equivalent to calling replace() on every element of $texts individually,
-   * but uses a shared chain-prefix memo across all strings so structural
-   * prefix walks are performed only once per batch. This is the recommended
-   * API when replacing many short strings that share chain prefixes (e.g.
-   * Metatag replacing 20–30 per-tag strings against the same node).
-   *
-   * Semantics are identical to replace(): HTML output, same escaping rules,
-   * same 'clear', 'callback', 'langcode', 'viewer', and 'output_context'
-   * option handling.
-   *
-   * @param string[] $texts
-   *   Array of HTML strings keyed by arbitrary caller-defined keys.
-   * @param array $data
-   *   (optional) An array of keyed objects. See replace().
-   * @param array $options
-   *   (optional) A keyed array of options. See replace().
-   * @param \Drupal\Core\Render\BubbleableMetadata|null $bubbleable_metadata
-   *   (optional) Target for adding metadata. See replace().
-   *
-   * @return string[]
-   *   Replaced strings, with the same keys as $texts.
-   */
-  public function replaceMultiple(array $texts, array $data = [], array $options = [], ?BubbleableMetadata $bubbleable_metadata = NULL): array {
-    if (empty($texts)) {
-      return [];
-    }
-
-    // Scan all texts and union their tokens, grouped by type. Deduplication is
-    // inherent: scan() returns unique token-name→raw-token maps per type, and
-    // merging multiple scans with += keeps the first occurrence per key.
-    $allTokensByType = [];
-    foreach ($texts as $text) {
-      foreach ($this->scan((string) $text) as $type => $tokens) {
-        if (!isset($allTokensByType[$type])) {
-          $allTokensByType[$type] = [];
-        }
-        // += keeps the first raw form seen for each token name (they are
-        // identical within one text, and across texts the raw form is the
-        // bracket string which is the same regardless of which text it came
-        // from).
-        $allTokensByType[$type] += $tokens;
-      }
-    }
-
-    if (empty($allTokensByType)) {
-      // No tokens anywhere — return texts unchanged.
-      return $texts;
-    }
-
-    $bubbleable_metadata_is_passed_in = (bool) $bubbleable_metadata;
-    $bubbleable_metadata = $bubbleable_metadata ?: new BubbleableMetadata();
-
-    if (!isset($options['output_context'])) {
-      $options['output_context'] = OutputContext::Html;
-    }
-
-    // One shared memo for the whole batch so prefix walks are amortised.
-    $memo = ($this->resolutionEngine instanceof TokenResolutionEngine)
-      ? new ChainPrefixMemo()
-      : NULL;
-
-    // Resolve all token types once, sharing the memo across all types.
-    $replacements = [];
-    foreach ($allTokensByType as $type => $tokens) {
-      if ($memo !== NULL) {
-        $replacements += $this->resolutionEngine->generateWithMemo($type, $tokens, $data, $options, $bubbleable_metadata, $memo);
-      }
-      else {
-        $replacements += $this->generate($type, $tokens, $data, $options, $bubbleable_metadata);
-      }
-      if (!empty($options['clear'])) {
-        $replacements += array_fill_keys($tokens, '');
-      }
-    }
-
-    // Apply the same escaping as doReplace().
-    foreach ($replacements as $token => $value) {
-      $replacements[$token] = $value instanceof MarkupInterface
-        ? $value
-        : new HtmlEscapedText($value);
-    }
-
-    // Apply the callback if present (same as doReplace()).
-    if (!empty($options['callback'])) {
-      $function = $options['callback'];
-      $function($replacements, $data, $options, $bubbleable_metadata);
-    }
-
-    if (!$bubbleable_metadata_is_passed_in && $this->renderer->hasRenderContext()) {
-      $build = [];
-      $bubbleable_metadata->applyTo($build);
-      $this->renderer->render($build);
-    }
-
-    // Substitute per text, preserving the caller's keys.
-    $result = [];
-    $tokenKeys = array_keys($replacements);
-    $tokenValues = array_values($replacements);
-    foreach ($texts as $key => $text) {
-      $result[$key] = str_replace($tokenKeys, $tokenValues, (string) $text);
-    }
-    return $result;
-  }
-
-  /**
    * Replaces all tokens in a given string with appropriate values.
    *
    * @param bool $markup
@@ -376,13 +239,6 @@ class Token {
 
     $bubbleable_metadata_is_passed_in = (bool) $bubbleable_metadata;
     $bubbleable_metadata = $bubbleable_metadata ?: new BubbleableMetadata();
-
-    // Tell the resolution engine which output context to render attributed
-    // tokens for, unless the caller has already chosen one explicitly. replace()
-    // produces HTML; replacePlain() produces plain text.
-    if (!isset($options['output_context'])) {
-      $options['output_context'] = $markup ? OutputContext::Html : OutputContext::PlainText;
-    }
 
     $replacements = [];
     foreach ($text_tokens as $type => $tokens) {
@@ -486,9 +342,6 @@ class Token {
    *     array of token replacements after they are generated. Can be used when
    *     modules require special formatting of token text, for example URL
    *     encoding or truncation to a specific length.
-   *   - viewer, token_actor, output_context: Honoured by the token resolution
-   *     engine for tokens served by attributed resolvers. See ::replace() for
-   *     details.
    * @param \Drupal\Core\Render\BubbleableMetadata $bubbleable_metadata
    *   The bubbleable metadata. This is passed to the token replacement
    *   implementations so that they can attach their metadata.
@@ -502,13 +355,24 @@ class Token {
    * @see hook_tokens_alter()
    */
   public function generate($type, array $tokens, array $data, array $options, BubbleableMetadata $bubbleable_metadata) {
-    if ($this->resolutionEngine !== NULL) {
-      return $this->resolutionEngine->generate($type, $tokens, $data, $options, $bubbleable_metadata);
+    foreach ($data as $object) {
+      if ($object instanceof CacheableDependencyInterface || $object instanceof AttachmentsInterface) {
+        $bubbleable_metadata->addCacheableDependency($object);
+      }
     }
 
-    // Fallback for direct instantiation without a resolution engine (e.g.
-    // subclasses or tests that call new Token() without the 6th argument).
-    return (new LegacyTokenBridge($this->moduleHandler))->generate($type, $tokens, $data, $options, $bubbleable_metadata);
+    $replacements = $this->moduleHandler->invokeAll('tokens', [$type, $tokens, $data, $options, $bubbleable_metadata]);
+
+    // Allow other modules to alter the replacements.
+    $context = [
+      'type' => $type,
+      'tokens' => $tokens,
+      'data' => $data,
+      'options' => $options,
+    ];
+    $this->moduleHandler->alter('tokens', $replacements, $context, $bubbleable_metadata);
+
+    return $replacements;
   }
 
   /**

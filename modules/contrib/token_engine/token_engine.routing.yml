@@ -1,0 +1,7 @@
+token_engine.settings:
+  path: '/admin/config/system/token-engine'
+  defaults:
+    _form: '\Drupal\token_engine\Form\TokenEngineSettingsForm'
+    _title: 'Token Engine'
+  requirements:
+    _permission: 'administer site configuration'

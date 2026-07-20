@@ -1,0 +1,63 @@
+services:
+  token_engine.renderer:
+    class: Drupal\token_engine\TokenRenderer
+    arguments: ['@date.formatter', '@transliteration', '@entity.repository']
+  Drupal\token_engine\TokenRendererInterface: '@token_engine.renderer'
+  token_engine.legacy_bridge:
+    class: Drupal\token_engine\LegacyTokenBridge
+    arguments: ['@module_handler']
+  Drupal\token_engine\LegacyTokenBridge: '@token_engine.legacy_bridge'
+  plugin.manager.token_engine_resolver:
+    class: Drupal\token_engine\TokenResolverManager
+    parent: default_plugin_manager
+  token_engine.attributed_discovery:
+    class: Drupal\token_engine\Discovery\AttributedTokenDiscovery
+    arguments:
+      - '@plugin.manager.token_engine_resolver'
+      - !tagged_iterator token_engine.generic_resolver
+    tags:
+      - { name: token_engine.discovery }
+  Drupal\token_engine\Discovery\TokenDiscoveryInterface: '@token_engine.attributed_discovery'
+  token_engine.typed_data_discovery:
+    class: Drupal\token_engine\Discovery\TypedDataFieldDiscovery
+    arguments: ['@entity_type.manager', '@entity_field.manager']
+    tags:
+      - { name: token_engine.discovery.auto }
+  token_engine.list_delta_resolver:
+    class: Drupal\token_engine\ListDeltaResolver
+  token_engine.field_value_resolver:
+    class: Drupal\token_engine\FieldValueToken
+    tags:
+      - { name: token_engine.generic_resolver }
+  token_engine.entity_reference_field_resolver:
+    class: Drupal\token_engine\EntityReferenceFieldToken
+    tags:
+      - { name: token_engine.generic_resolver }
+  token_engine.entity_deref_resolver:
+    class: Drupal\token_engine\EntityDerefToken
+    tags:
+      - { name: token_engine.generic_resolver }
+  token_engine.image_style_resolver:
+    class: Drupal\token_engine\ImageStyleToken
+    arguments: ['@entity_type.manager']
+    tags:
+      - { name: token_engine.generic_resolver }
+  token_engine.registry:
+    class: Drupal\token_engine\TokenRegistry
+    arguments: ['@module_handler', '@cache.default', '@language_manager', '@event_dispatcher', !tagged_iterator token_engine.discovery.auto, !tagged_iterator token_engine.discovery, '@cache_tags.invalidator']
+  Drupal\token_engine\TokenRegistryInterface: '@token_engine.registry'
+  token_engine.entity_type_mapper:
+    class: Drupal\token_engine\TokenEntityTypeMapper
+  token_engine.context_matcher:
+    class: Drupal\token_engine\TokenContextMatcher
+    arguments: ['@token_engine.registry', '@token_engine.entity_type_mapper']
+  logger.channel.token_engine:
+    parent: logger.channel_base
+    arguments: ['token_engine']
+  token_engine.unenforced_monitor:
+    class: Drupal\token_engine\UnenforcedUsageMonitor
+    arguments: ['@state', '@logger.channel.token_engine']
+  token_engine.resolution_engine:
+    class: Drupal\token_engine\TokenResolutionEngine
+    arguments: ['@token_engine.legacy_bridge', '@token_engine.registry', '@token_engine.attributed_discovery', '@token_engine.renderer', '@token_engine.list_delta_resolver', '@language_manager', '@event_dispatcher', '@entity.repository', '@token_engine.unenforced_monitor']
+  Drupal\token_engine\TokenResolutionEngineInterface: '@token_engine.resolution_engine'

@@ -4,7 +4,7 @@ namespace Drupal\token;
 
 use Drupal\Core\Cache\CacheBackendInterface;
 use Drupal\Core\Language\LanguageInterface;
-use Drupal\Core\Utility\Token as TokenBase;
+use Drupal\token_engine\Token as TokenBase;
 
 /**
  * Service to retrieve token information.

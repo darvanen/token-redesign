@@ -6,6 +6,7 @@ namespace Drupal\Tests\eca\Kernel;
 
 use Drupal\Core\Render\BubbleableMetadata;
 use Drupal\Core\Utility\Token;
+use Drupal\token_engine\Token as EngineToken;
 use Drupal\eca\EcaEvents;
 use Drupal\eca\Event\TokenGenerateEvent;
 use Drupal\eca\Token\CoreToken;
@@ -50,6 +51,7 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     'node',
     'eca',
     'modeler_api',
+    'token_engine',
   ];
 
   /**
@@ -211,9 +213,11 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
     /** @var \Drupal\eca\Token\CoreToken $core_token */
     $core_token = \Drupal::service('eca.service.token');
 
-    // Access the protected $resolutionEngine property via reflection.
+    // Access the protected $resolutionEngine property via reflection. On the
+    // contrib stack the property lives on token_engine's Token subclass, not
+    // on core's; CoreToken extends it so the decorator carries the engine.
     // setAccessible() is a no-op since PHP 8.1 and deprecated in PHP 8.5.
-    $ref = new \ReflectionClass(Token::class);
+    $ref = new \ReflectionClass(EngineToken::class);
     $prop = $ref->getProperty('resolutionEngine');
     $engine = $prop->getValue($core_token);
 
@@ -228,8 +232,8 @@ class TokenEngineBackwardCompatibilityTest extends KernelTestBase {
    * resolvable (node, entity_type) definition backed by that resolver class.
    */
   public function testEntityTypeTokenResolverIsRegistered(): void {
-    /** @var \Drupal\Core\Token\TokenRegistryInterface $registry */
-    $registry = $this->container->get('token.registry');
+    /** @var \Drupal\token_engine\TokenRegistryInterface $registry */
+    $registry = $this->container->get('token_engine.registry');
 
     $definition = $registry->getResolvableToken('node', 'entity_type');
 
