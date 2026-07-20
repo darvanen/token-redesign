@@ -35,11 +35,16 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
  *    the first. Reported as µs per replace() call (median across languages).
  *  - S3 cache footprint: rows and bytes in cache_default keyed token* after
  *    all 80 languages have been exercised.
- *  - S4 field chains: multi-segment field-token workload. Plain core cannot
- *    resolve these (no field tokens without contrib token), so S4 measures
- *    scan-and-fail cost there vs full structural resolution (with entity
- *    translation selection) on HEAD. Values differ by design; the comparison
- *    is cost, not output. Uses replaceMultiple() where available.
+ *  - S4 field chains, translation done by each stack: the root object is
+ *    passed UNTRANSLATED with an explicit langcode option, so whichever stack
+ *    runs must select the translations itself (contrib token's hooks call
+ *    getTranslationFromContext() per field token; the engine translates at
+ *    the root and deref boundaries). The contrib token module is enabled when
+ *    present precisely so plain core resolves the same chains to the same
+ *    translated values: like-for-like work, like-for-like output. For the
+ *    plain-core run, check out contrib token's own upstream base commit; the
+ *    branch checkout references engine classes at container compile time.
+ *    Uses replaceMultiple() where available.
  *
  * The workload tokens are core-defined ([node:title], [node:author:name],
  * [site:name], date chains) so both stacks resolve identical values through
@@ -74,6 +79,8 @@ class TokenMultilingualBenchmark extends EntityKernelTestBase {
     'text',
     'filter',
     'language',
+    'path',
+    'path_alias',
   ];
 
   /**
@@ -96,10 +103,31 @@ class TokenMultilingualBenchmark extends EntityKernelTestBase {
   private $admin;
 
   /**
+   * Whether the contrib token module was successfully enabled.
+   */
+  private bool $contribTokenEnabled = FALSE;
+
+  /**
    * {@inheritdoc}
    */
   protected function setUp(): void {
     parent::setUp();
+
+    // Enable the contrib token module when present, mirroring
+    // TokenReplacementBenchmark: it supplies the legacy field tokens that let
+    // plain core resolve (and translate) the S4 field-chain workload.
+    if (file_exists(\Drupal::root() . '/modules/contrib/token/token.info.yml')) {
+      try {
+        $this->installEntitySchema('path_alias');
+        \Drupal::service('router.builder')->rebuild();
+        $this->enableModules(['token']);
+        $this->contribTokenEnabled = TRUE;
+      }
+      catch (\Throwable) {
+        $this->contribTokenEnabled = FALSE;
+      }
+    }
+
     $this->installConfig(['system', 'filter', 'node']);
     $this->installEntitySchema('node');
     $this->createContentType(['type' => 'article']);
@@ -229,12 +257,14 @@ class TokenMultilingualBenchmark extends EntityKernelTestBase {
    * @return float
    *   Wall-clock milliseconds for the whole workload.
    */
-  private function replaceWorkload(array $texts, string $langcode): float {
+  private function replaceWorkload(array $texts, string $langcode, bool $translateRoot = TRUE): float {
     $token = $this->container->get('token');
-    // Pass the translation object for the language, as real callers (pathauto,
-    // metatag) do: legacy core node tokens read the object they are handed and
-    // never re-translate scalar values like the title themselves.
-    $data = ['node' => $this->node->getTranslation($langcode)];
+    // With $translateRoot, pass the translation object for the language, as
+    // real callers (pathauto, metatag) do: legacy core node tokens read the
+    // object they are handed and never re-translate scalars like the title.
+    // Without it, pass the untranslated default object so the stack under
+    // test has to select every translation itself from the langcode option.
+    $data = ['node' => $translateRoot ? $this->node->getTranslation($langcode) : $this->node];
     $options = ['langcode' => $langcode, 'viewer' => $this->admin, 'clear' => TRUE];
     $start = hrtime(TRUE);
     foreach ($texts as $text) {
@@ -297,12 +327,14 @@ class TokenMultilingualBenchmark extends EntityKernelTestBase {
     $cacheBytes = array_sum($cacheRows);
     $registrySlices = count(array_filter(array_keys($cacheRows), fn(string $cid): bool => str_starts_with($cid, 'token_registry')));
 
-    // S4: field chains, individual replace() then batch when available.
+    // S4: field chains with the translation work done by the stack under
+    // test: untranslated root, explicit langcode. Individual replace() first,
+    // then batch when available.
     $this->switchLanguage('en');
     $chainWorkload = $this->fieldChainWorkload();
     $chainMs = [];
     foreach (array_slice($this->langcodes, 0, 10) as $langcode) {
-      $chainMs[] = $this->replaceWorkload($chainWorkload, $langcode);
+      $chainMs[] = $this->replaceWorkload($chainWorkload, $langcode, FALSE);
     }
     $chainMedianUs = (self::median($chainMs) * 1000) / count($chainWorkload);
 
@@ -322,17 +354,28 @@ class TokenMultilingualBenchmark extends EntityKernelTestBase {
       $batchLine = sprintf('S4b batch (replaceMultiple):    %8.1f us/string (median, 10 languages)', (self::median($batchMs) * 1000) / count($chainWorkload));
     }
 
-    // A field-chain replacement resolves or clears; capture which, so the two
-    // runs' S4 numbers are read for what they are (resolution vs scan+clear).
+    // The apples-to-apples contract: both stacks resolve the chain workload
+    // to the SAME translated values from an untranslated root. With contrib
+    // token enabled this must hold on plain core too, so it is asserted, not
+    // merely reported.
     $chainProbe = (string) $token->replace('[node:field_related:entity:field_subtitle]', ['node' => $this->node], [
       'langcode' => 'de',
       'viewer' => $this->admin,
       'clear' => TRUE,
     ], new BubbleableMetadata());
+    $subtitleProbe = (string) $token->replace('[node:field_subtitle:0]', ['node' => $this->node], [
+      'langcode' => 'de',
+      'viewer' => $this->admin,
+      'clear' => TRUE,
+    ], new BubbleableMetadata());
+    if ($this->contribTokenEnabled) {
+      $this->assertSame('Related subtitle de', $chainProbe, 'The stack under test translates the dereferenced entity itself.');
+      $this->assertSame('Bench subtitle de', $subtitleProbe, 'The stack under test translates the root field value itself.');
+    }
     $chainResolved = $chainProbe === 'Related subtitle de';
 
     $lines = [
-      sprintf('=== Token multilingual benchmark [%s] %s languages, workload %d strings ===', $label, count($this->langcodes), $workloadSize),
+      sprintf('=== Token multilingual benchmark [%s] %s languages, workload %d strings, contrib token %s ===', $label, count($this->langcodes), $workloadSize, $this->contribTokenEnabled ? 'ENABLED' : 'absent'),
       sprintf('S1 first call per language:     median %8.2f ms | p90 %8.2f ms | total (all %d) %8.1f ms', self::median($firstCallMs), self::percentile($firstCallMs, 90), count($firstCallMs), array_sum($firstCallMs)),
       sprintf('S2 warm replace() throughput:   median %8.1f us/string (across languages, %d iterations each)', self::median($warmPerOpUs), $warmIterations),
       sprintf('S3 token cache footprint:       %d entries (%d registry slices), %d bytes total', count($cacheRows), $registrySlices, $cacheBytes),
