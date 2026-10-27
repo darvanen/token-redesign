@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\Core\Token;
 
 use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\TranslatableInterface;
@@ -346,7 +347,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
       if ($this->isResolvable($definition)) {
         $resolver = $this->resolverLocator->getResolver($definition->resolverClass);
         if ($resolver === NULL) {
-          return NULL;
+          return $this->denyOrFallThrough($accumulated, $currentType, $context);
         }
 
         $arguments = ['name' => $definition->name, 'path' => $definition->path];
@@ -406,7 +407,7 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
         $reEvaluatedDefinition = $this->registry->getResolvableToken($coercedType, $segment);
         if (!$this->isResolvable($reEvaluatedDefinition)) {
           // The segment still matches nothing on the item type; fall back.
-          return NULL;
+          return $this->denyOrFallThrough($accumulated, $currentType, $context);
         }
         // Coercion succeeded: merge the implicit delta result and re-evaluate.
         $accumulated = $accumulated->merge($deltaResult);
@@ -437,10 +438,40 @@ final class TokenResolutionEngine implements TokenResolutionEngineInterface {
 
       // This segment is not registered and is not a recognised index: the chain
       // cannot be completed structurally. Signal a fall back to legacy.
-      return NULL;
+      return $this->denyOrFallThrough($accumulated, $currentType, $context);
     }
 
     return $accumulated->withOutputType($currentType);
+  }
+
+  /**
+   * Ends a chain that cannot be completed, without discarding a denial.
+   *
+   * Returns NULL (fall through to legacy) only when no denial has accumulated.
+   * Otherwise returns an empty result carrying the denial, so the caller's
+   * access gate drops the value instead of routing the token to the legacy
+   * pipeline, which performs no access check.
+   */
+  private function denyOrFallThrough(TokenResult $accumulated, string $currentType, TokenResolutionContext $context): ?TokenResult {
+    if ($this->isDenied($accumulated->access, $context)) {
+      return new TokenResult('', $accumulated->cacheability, $accumulated->access, $currentType);
+    }
+    return NULL;
+  }
+
+  /**
+   * Returns TRUE when the access result denies the viewer.
+   *
+   * In the unenforced tier root access is always allowed, so this is FALSE and
+   * legacy resolution is unchanged. In the enforced tier any result that is
+   * not allowed is a denial, including the neutral result core returns when a
+   * viewer lacks a permission.
+   */
+  private function isDenied(AccessResultInterface $access, TokenResolutionContext $context): bool {
+    if ($access->isAllowed()) {
+      return FALSE;
+    }
+    return $access->isForbidden() || $context->actor->isEnforced();
   }
 
   /**

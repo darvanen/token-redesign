@@ -1,0 +1,7 @@
+name: 'Token denied chain test'
+type: module
+package: Testing
+version: VERSION
+dependencies:
+  - drupal:user
+  - drupal:field
